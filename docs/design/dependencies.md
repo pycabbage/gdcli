@@ -20,11 +20,12 @@ Audit date: 2026-11-18. Every direct dependency was checked on four axes against
 | http-body-util | 0.1.5 | 220M | 173 | hyperium (org) | 5 | 2026-08-12 | PASS |
 | hyper-rustls | 0.27.10 | 231M | 362 | rustls (org) | 5 | 2026-09-20 | PASS |
 | hyper-util | 0.1.21 | 221M | 182 | hyperium (org) | 31 | 2026-09-24 | PASS |
-| serde_json | 1.0.154 | 441M | 5,672 | serde-rs (org) | 9 | 2026-10-11 | PASS |
+| serde_json (`preserve_order`) | 1.0.154 | 441M | 5,672 | serde-rs (org) | 9 | 2026-10-11 | PASS |
 | time | 0.3.55 | 251M | 1,352 | time-rs (org) | 10 | 2026-08-01 | PASS (jhpratt writes 96 % of the commits) |
 | tokio | 1.54.1 | 313M | 33,716 | tokio-rs (org) | 188 | 2026-10-21 | PASS |
 | url | 2.5.8 | 268M | 1,590 | servo (org) | 14 | 2026-01-05 | PASS |
 | yup-oauth2 | 12.1.2 | 9.0M | 246 | dermesser (user) | 2 | 2026-01-07 | WARN (accepted, below) |
+| foldhash (transitive, new in this wave) | 0.2.0 | 350M | 392 | orlp (user) | 1 (not the owner) | 2025-08-23 | WARN (accepted, below) |
 | tempfile (dev) | 3.27.0 | 260M | 1,474 | Stebalien (user) | 6 | 2026-03-11 | PASS (one author writes 88 % of the commits) |
 | wiremock (dev) | 0.6.5 | 36.6M | 805 | LukeMathWalker (user) | 0 | 2025-08-24 | FAIL (accepted, dev only, below) |
 
@@ -44,6 +45,8 @@ All locked versions equal the latest release on crates.io, none is yanked, and e
 
 ## Accepted risks and exit plans
 
+- serde_json `preserve_order` (key order of the JSON records is the output contract) enables indexmap's hasher feature, which adds one package to the tree: `foldhash` 0.2.0 (the default hasher of hashbrown, 350M downloads in 90 days, 416 reverse dependencies, 392 stars, single user owner, last release 2025-08-23). Verdict WARN (stars and release age), no advisory. Exit plan: build the records as an ordered `Vec<(&str, Value)>` and drop the feature (an estimated 40 more lines).
+
 - yup-oauth2 (WARN: 246 stars, user-owned repository, 7 commits in 12 months, none in the last 10): it is the only maintained crate with the installed-app flow, loopback redirect, token persistence and refresh, and it has two crates.io owners and 762 reverse dependencies. Trigger to leave: a RustSec advisory, breakage against Google's OAuth endpoints with no fix within 60 days, or no release for 24 months (January 2028). Plan: own installed flow on top of `hyper-util` and `serde_json` (loopback listener, code exchange, refresh, 0600 token file), an estimated 100 to 150 lines of security-sensitive code.
 - wiremock (dev only, FAIL on maintenance): exposure is the CI build and test only. Trigger: it stops compiling on a new toolchain or an advisory appears. Plan: port the harness to `httpmock` (or `mockito`) and reduce the received-request assertions to matchers.
 - The REST layer is ours: we own the Calendar v3, Drive v3 and Meet v2 request and response handling (about 150 lines in `src/google.rs` plus the field masks). Trigger to revisit: Google or a trusted organisation publishes maintained Rust clients for these APIs that support partial responses and lean dependencies.
@@ -53,7 +56,7 @@ All locked versions equal the latest release on crates.io, none is yanked, and e
 - `cargo audit` (RustSec database of 1527 advisories, 153 crates in `Cargo.lock`): 0 vulnerabilities, 0 warnings; it also passes with `-D warnings`, so it can be added to CI without an ignore list.
 - `cargo tree -d -e normal`: no duplicate versions in the shipped tree.
 - `cargo machete`: no unused dependency.
-- 108 unique packages in the normal tree, including gdcli. Notes from the audit that remain true: `cfg-if` (via ring) is archived upstream without an advisory; `lazy_static` (dev only, via wiremock) is archived; about 14 tiny feature-complete crates have had no release for more than 18 months (`fnv`, `httpdate`, `seahash`, `untrusted`, `httparse`, `subtle`, `tower-service`, `ring` 0.17.14 whose upstream is active, ...), none has an advisory; `base64` 0.22 is locked while 0.23 exists, chosen by yup-oauth2.
+- 109 unique packages in the normal tree, including gdcli (one more than before: foldhash, see above). Notes from the audit that remain true: `cfg-if` (via ring) is archived upstream without an advisory; `lazy_static` (dev only, via wiremock) is archived; about 14 tiny feature-complete crates have had no release for more than 18 months (`fnv`, `httpdate`, `seahash`, `untrusted`, `httparse`, `subtle`, `tower-service`, `ring` 0.17.14 whose upstream is active, ...), none has an advisory; `base64` 0.22 is locked while 0.23 exists, chosen by yup-oauth2.
 
 ## How to re-audit
 

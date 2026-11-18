@@ -17,7 +17,9 @@ const CODE: &str = "abc-defg-hij";
 
 async fn list_output(harness: &Harness) -> String {
     let mut out = Vec::new();
-    meet::list(&harness.api, now(), &mut out).await.unwrap();
+    meet::list(&harness.api, now(), &common::args(), &mut out)
+        .await
+        .unwrap();
     text(out)
 }
 
@@ -234,7 +236,11 @@ async fn list_prints_only_the_header_when_there_are_no_meetings() {
 async fn list_prints_nothing_when_the_api_fails() {
     let harness = Harness::start().await;
     let mut out = Vec::new();
-    assert!(meet::list(&harness.api, now(), &mut out).await.is_err());
+    assert!(
+        meet::list(&harness.api, now(), &common::args(), &mut out)
+            .await
+            .is_err()
+    );
     assert_eq!(out, b"");
 }
 
@@ -308,59 +314,11 @@ async fn mount_artifacts(harness: &Harness, record: &str, participants: Value) {
 
 async fn get_output(harness: &Harness, id: &str) -> anyhow::Result<String> {
     let mut out = Vec::new();
-    meet::get(&harness.api, id, &mut out).await?;
+    meet::get(&harness.api, id, false, &mut out).await?;
     Ok(text(out))
 }
 
-#[tokio::test]
-async fn get_prints_event_space_and_every_conference_oldest_first() {
-    let harness = Harness::start().await;
-    mount_meeting(&harness).await;
-    mount_records(
-        &harness,
-        records_filter(),
-        json!([
-            {"name": "conferenceRecords/REC2", "startTime": "2026-11-17T01:30:00Z"},
-            {"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z", "endTime": "2026-11-17T01:20:00Z"}
-        ]),
-    )
-    .await;
-    mount_artifacts(
-        &harness,
-        "REC1",
-        json!([
-            {"signedinUser": {"user": "users/1", "displayName": "Alice"}, "earliestStartTime": "2026-11-17T01:00:00Z", "latestEndTime": "2026-11-17T01:20:00Z"},
-            {"anonymousUser": {"displayName": "Guest"}, "earliestStartTime": "2026-11-17T01:05:00Z"}
-        ]),
-    )
-    .await;
-    mount_artifacts(
-        &harness,
-        "REC2",
-        json!([{"phoneUser": {"displayName": "+81 90"}}]),
-    )
-    .await;
-    assert_eq!(
-        get_output(&harness, "evt1").await.unwrap(),
-        "id: evt1\n\
-         summary: Event evt1\n\
-         start: 2026-11-17T01:00:00Z\n\
-         end: 2026-11-17T02:00:00Z\n\
-         meeting_code: abc-defg-hij\n\
-         meeting_uri: https://meet.google.com/abc-defg-hij\n\
-         access_type: TRUSTED\n\
-         entry_point_access: ALL\n\
-         moderation: OFF\n\
-         conference: REC1 2026-11-17T01:00:00Z 2026-11-17T01:20:00Z\n\
-         participant: Alice (user) 2026-11-17T01:00:00Z 2026-11-17T01:20:00Z\n\
-         participant: Guest (anonymous) 2026-11-17T01:05:00Z\n\
-         recording: FILE_GENERATED 2026-11-17T01:00:00Z 2026-11-17T02:00:00Z drive:FILE-REC1\n\
-         transcript: ENDED doc:DOC-REC1\n\
-         conference: REC2 2026-11-17T01:30:00Z\n\
-         participant: +81 90 (phone)\n\
-         recording: FILE_GENERATED 2026-11-17T01:00:00Z 2026-11-17T02:00:00Z drive:FILE-REC2\n\
-         transcript: ENDED doc:DOC-REC2\n"
-    );
+async fn assert_meet_requests(harness: &Harness) {
     let event = harness.requests(&format!("{EVENTS_PATH}/evt1")).await;
     assert_eq!(event.len(), 1);
     assert_eq!(event[0]["fields"], EVENT_FIELDS);
@@ -399,6 +357,83 @@ async fn get_prints_event_space_and_every_conference_oldest_first() {
             assert_eq!(requests[0]["pageSize"], size);
         }
     }
+}
+
+#[tokio::test]
+async fn get_prints_event_space_and_every_conference_oldest_first() {
+    let harness = Harness::start().await;
+    mount_meeting(&harness).await;
+    mount_records(
+        &harness,
+        records_filter(),
+        json!([
+            {"name": "conferenceRecords/REC2", "startTime": "2026-11-17T01:30:00Z"},
+            {"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z", "endTime": "2026-11-17T01:20:00Z"}
+        ]),
+    )
+    .await;
+    mount_artifacts(
+        &harness,
+        "REC1",
+        json!([
+            {"signedinUser": {"user": "users/1", "displayName": "Alice"}, "earliestStartTime": "2026-11-17T01:00:00Z", "latestEndTime": "2026-11-17T01:20:00Z"},
+            {"anonymousUser": {"displayName": "Guest"}, "earliestStartTime": "2026-11-17T01:05:00Z"}
+        ]),
+    )
+    .await;
+    mount_artifacts(
+        &harness,
+        "REC2",
+        json!([{"phoneUser": {"displayName": "+81 90"}}]),
+    )
+    .await;
+    let text = get_output(&harness, "evt1").await.unwrap();
+    assert_eq!(
+        text,
+        "id: evt1\nsummary: Event evt1\nstart: 2026-11-17T01:00:00Z\nend: 2026-11-17T02:00:00Z\n\
+         meeting_code: abc-defg-hij\nmeeting_uri: https://meet.google.com/abc-defg-hij\n\
+         access_type: TRUSTED\nentry_point_access: ALL\nmoderation: OFF\n\
+         conference: id=REC1 start=2026-11-17T01:00:00Z end=2026-11-17T01:20:00Z\n\
+         participant: name=Alice kind=user start=2026-11-17T01:00:00Z end=2026-11-17T01:20:00Z\n\
+         participant: name=Guest kind=anonymous start=2026-11-17T01:05:00Z\n\
+         recording: state=FILE_GENERATED start=2026-11-17T01:00:00Z end=2026-11-17T02:00:00Z drive_file=FILE-REC1\n\
+         transcript: state=ENDED document_id=DOC-REC1\n\
+         conference: id=REC2 start=2026-11-17T01:30:00Z\n\
+         participant: name=\"+81 90\" kind=phone\n\
+         recording: state=FILE_GENERATED start=2026-11-17T01:00:00Z end=2026-11-17T02:00:00Z drive_file=FILE-REC2\n\
+         transcript: state=ENDED document_id=DOC-REC2\n"
+    );
+    assert_meet_requests(&harness).await;
+    let mut out = Vec::new();
+    meet::get(&harness.api, "evt1", true, &mut out)
+        .await
+        .unwrap();
+    let json = common::text(out);
+    assert_eq!(
+        json,
+        format!(
+            "{}\n",
+            json!({
+                "id": "evt1", "summary": "Event evt1",
+                "start": "2026-11-17T01:00:00Z", "end": "2026-11-17T02:00:00Z",
+                "meeting_code": "abc-defg-hij", "meeting_uri": "https://meet.google.com/abc-defg-hij",
+                "access_type": "TRUSTED", "entry_point_access": "ALL", "moderation": "OFF",
+                "conferences": [
+                    {"id": "REC1", "start": "2026-11-17T01:00:00Z", "end": "2026-11-17T01:20:00Z",
+                     "participants": [
+                        {"name": "Alice", "kind": "user", "start": "2026-11-17T01:00:00Z", "end": "2026-11-17T01:20:00Z"},
+                        {"name": "Guest", "kind": "anonymous", "start": "2026-11-17T01:05:00Z"}],
+                     "recordings": [{"state": "FILE_GENERATED", "start": "2026-11-17T01:00:00Z", "end": "2026-11-17T02:00:00Z", "drive_file": "FILE-REC1"}],
+                     "transcripts": [{"state": "ENDED", "document_id": "DOC-REC1"}]},
+                    {"id": "REC2", "start": "2026-11-17T01:30:00Z",
+                     "participants": [{"name": "+81 90", "kind": "phone"}],
+                     "recordings": [{"state": "FILE_GENERATED", "start": "2026-11-17T01:00:00Z", "end": "2026-11-17T02:00:00Z", "drive_file": "FILE-REC2"}],
+                     "transcripts": [{"state": "ENDED", "document_id": "DOC-REC2"}]}
+                ]
+            })
+        )
+    );
+    common::assert_same_information(&text, &json);
 }
 
 #[tokio::test]
@@ -507,6 +542,7 @@ async fn get_tolerates_meet_403_and_404_with_a_single_line() {
                  end: 2026-11-17T02:00:00Z\n\
                  meeting_code: abc-defg-hij\n\
                  meeting_uri: https://meet.google.com/abc-defg-hij\n\
+                 conference: none\n\
                  meet_api: unavailable ({status} {message})\n"
             )
         );
@@ -579,11 +615,101 @@ async fn get_prints_what_arrived_when_one_artifact_call_is_forbidden() {
         .await;
     let output = get_output(&harness, "evt1").await.unwrap();
     assert!(
-        output.contains("conference: REC1 2026-11-17T01:00:00Z\nrecording: ENDED drive:F1\n"),
+        output.contains(
+            "conference: id=REC1 start=2026-11-17T01:00:00Z\nrecording: state=ENDED drive_file=F1\n"
+        ),
         "{output}"
     );
     assert!(
         output.ends_with("meet_api: unavailable (403 no participant access)\n"),
         "{output}"
     );
+}
+
+#[tokio::test]
+async fn list_counts_and_json_follow_the_same_rows() {
+    let harness = Harness::start().await;
+    let events: Vec<Value> = (1..=4)
+        .map(|day| at_day(&format!("p{day}"), "aaa-bbbb-ccc", 10 + day, 1))
+        .chain((1..=4).map(|day| at_day(&format!("u{day}"), "ddd-eeee-fff", 18 + day, 1)))
+        .collect();
+    harness.mount_calendar(events).await;
+    let args = gdcli::cli::ListArgs {
+        past: 2,
+        upcoming: 3,
+        json: true,
+    };
+    let mut out = Vec::new();
+    meet::list(&harness.api, now(), &args, &mut out)
+        .await
+        .unwrap();
+    let rows: Vec<Value> = serde_json::from_str(&text(out)).unwrap();
+    let found: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap(),
+                row["when"].as_str().unwrap(),
+                row["meeting_code"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("p3", "past", "aaa-bbbb-ccc"),
+            ("p4", "past", "aaa-bbbb-ccc"),
+            ("u1", "upcoming", "ddd-eeee-fff"),
+            ("u2", "upcoming", "ddd-eeee-fff"),
+            ("u3", "upcoming", "ddd-eeee-fff"),
+        ]
+    );
+    assert_eq!(
+        rows[0].as_object().unwrap().keys().collect::<Vec<_>>(),
+        HEADER.split('\t').collect::<Vec<_>>()
+    );
+    assert_eq!(list_json_empty().await, "[]\n");
+}
+
+async fn list_json_empty() -> String {
+    let harness = Harness::start_with(Vec::new()).await;
+    let args = gdcli::cli::ListArgs {
+        past: 5,
+        upcoming: 5,
+        json: true,
+    };
+    let mut out = Vec::new();
+    meet::list(&harness.api, now(), &args, &mut out)
+        .await
+        .unwrap();
+    text(out)
+}
+
+#[tokio::test]
+async fn meet_upcoming_pages_use_at_least_25_and_at_most_250_events() {
+    for (requested, expected) in [
+        (1, "25"),
+        (3, "25"),
+        (25, "25"),
+        (100, "100"),
+        (400, "250"),
+        (1000, "250"),
+    ] {
+        let harness = Harness::start_with(vec![at_day("m1", CODE, 20, 1)]).await;
+        let args = gdcli::cli::ListArgs {
+            past: 0,
+            upcoming: requested,
+            json: false,
+        };
+        meet::list(&harness.api, now(), &args, &mut Vec::new())
+            .await
+            .unwrap();
+        let sizes: Vec<String> = harness
+            .requests(EVENTS_PATH)
+            .await
+            .into_iter()
+            .map(|query| query["maxResults"].clone())
+            .collect();
+        assert_eq!(sizes, [expected], "{requested}");
+    }
 }

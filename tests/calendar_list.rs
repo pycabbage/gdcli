@@ -8,7 +8,9 @@ const HEADER: &str = "id\twhen\tstart\tend\tsummary";
 
 async fn render_all(harness: &Harness) -> Vec<String> {
     let mut out = Vec::new();
-    calendar::list(&harness.api, now(), &mut out).await.unwrap();
+    calendar::list(&harness.api, now(), &common::args(), &mut out)
+        .await
+        .unwrap();
     text(out).lines().map(str::to_owned).collect()
 }
 
@@ -273,7 +275,9 @@ async fn header_is_printed_when_there_are_no_events() {
     let harness = Harness::start().await;
     harness.mount_calendar(Vec::new()).await;
     let mut out = Vec::new();
-    calendar::list(&harness.api, now(), &mut out).await.unwrap();
+    calendar::list(&harness.api, now(), &common::args(), &mut out)
+        .await
+        .unwrap();
     assert_eq!(text(out), format!("{HEADER}\n"));
 }
 
@@ -299,7 +303,11 @@ async fn every_list_request_asks_only_for_appointment_like_event_types() {
 async fn nothing_is_printed_when_the_api_fails() {
     let harness = Harness::start().await;
     let mut out = Vec::new();
-    assert!(calendar::list(&harness.api, now(), &mut out).await.is_err());
+    assert!(
+        calendar::list(&harness.api, now(), &common::args(), &mut out)
+            .await
+            .is_err()
+    );
     assert_eq!(out, b"");
 }
 
@@ -328,19 +336,179 @@ async fn drops_ended_all_day_events_from_upcoming_so_nothing_prints_twice() {
 #[tokio::test]
 async fn propagates_api_errors() {
     let harness = Harness::start().await;
-    wiremock::Mock::given(wiremock::matchers::any())
-        .respond_with(
-            wiremock::ResponseTemplate::new(403)
-                .set_body_json(json!({"error": {"code": 403, "message": "Calendar API disabled"}})),
-        )
-        .mount(&harness.server)
-        .await;
+    let body = json!({"error": {"code": 403, "message": "Calendar API disabled"}}).to_string();
+    harness.fail_all(403, &body).await;
     let mut out = Vec::new();
-    let error = calendar::list(&harness.api, now(), &mut out)
+    let error = calendar::list(&harness.api, now(), &common::args(), &mut out)
         .await
         .unwrap_err();
     assert_eq!(
         gdcli::message(&error),
         "google api error 403: Calendar API disabled"
     );
+}
+
+fn dated(id: &str, days_ago: i64) -> Value {
+    let start = now() - time::Duration::days(days_ago) - time::Duration::hours(2);
+    event(
+        id,
+        &common::rfc3339(start),
+        &common::rfc3339(start + time::Duration::hours(1)),
+    )
+}
+
+fn ahead(id: &str, hours: i64) -> Value {
+    let start = now() + time::Duration::hours(hours);
+    event(
+        id,
+        &common::rfc3339(start),
+        &common::rfc3339(start + time::Duration::minutes(30)),
+    )
+}
+
+async fn run(harness: &Harness, past: u16, upcoming: u16, json: bool) -> String {
+    let args = gdcli::cli::ListArgs {
+        past,
+        upcoming,
+        json,
+    };
+    let mut out = Vec::new();
+    calendar::list(&harness.api, now(), &args, &mut out)
+        .await
+        .unwrap();
+    text(out)
+}
+
+fn ids(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .skip(1)
+        .map(|line| columns(line)[0].to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_requested_counts_are_honoured_on_both_sides() {
+    let mut events: Vec<Value> = (1..=12)
+        .map(|day| dated(&format!("p{day:02}"), day))
+        .collect();
+    events.extend((1..=12).map(|hour| ahead(&format!("u{hour:02}"), hour)));
+    for (past, upcoming) in [(1, 1), (3, 8), (8, 3), (12, 12)] {
+        let harness = Harness::start().await;
+        harness.mount_calendar(events.clone()).await;
+        let found = ids(&run(&harness, past, upcoming, false).await);
+        let expected: Vec<String> = (1..=past)
+            .rev()
+            .map(|day| format!("p{day:02}"))
+            .chain((1..=upcoming).map(|hour| format!("u{hour:02}")))
+            .collect();
+        assert_eq!(found, expected, "{past} {upcoming}");
+        let upcoming_size = upcoming.to_string();
+        let sizes: Vec<String> = harness
+            .requests(EVENTS_PATH)
+            .await
+            .into_iter()
+            .filter(|query| !query.contains_key("timeMax"))
+            .map(|query| query["maxResults"].clone())
+            .collect();
+        assert_eq!(sizes, [upcoming_size], "{upcoming}");
+    }
+}
+
+#[tokio::test]
+async fn zero_skips_a_side_without_any_request_for_it() {
+    let events = vec![dated("p1", 1), ahead("u1", 1)];
+    for (past, upcoming, past_requests, upcoming_requests) in
+        [(0, 5, 0, 1), (5, 0, 4, 0), (0, 0, 0, 0)]
+    {
+        let harness = Harness::start().await;
+        harness.mount_calendar(events.clone()).await;
+        let output = run(&harness, past, upcoming, false).await;
+        let requests = harness.requests(EVENTS_PATH).await;
+        let with_max = requests
+            .iter()
+            .filter(|query| query.contains_key("timeMax"))
+            .count();
+        assert_eq!(with_max, past_requests, "{past} {upcoming}");
+        assert_eq!(
+            requests.len() - with_max,
+            upcoming_requests,
+            "{past} {upcoming}"
+        );
+        assert_eq!(
+            output.lines().count(),
+            1 + usize::from(past > 0) + usize::from(upcoming > 0)
+        );
+    }
+}
+
+#[tokio::test]
+async fn larger_past_counts_widen_the_windows_and_keep_only_the_newest() {
+    let harness = Harness::start().await;
+    let mut events: Vec<Value> = (1..=3).map(|day| dated(&format!("a{day}"), day)).collect();
+    events.extend((1..=3).map(|day| dated(&format!("b{day}"), 10 + day)));
+    events.extend((1..=4).map(|day| dated(&format!("c{day}"), 100 + day)));
+    harness.mount_calendar(events).await;
+    let found = ids(&run(&harness, 8, 0, false).await);
+    assert_eq!(found, ["c2", "c1", "b3", "b2", "b1", "a3", "a2", "a1"]);
+    let windows = past_windows(&harness.requests(EVENTS_PATH).await);
+    assert_eq!(windows.len(), 3);
+}
+
+#[tokio::test]
+async fn json_lists_are_arrays_of_objects_keyed_by_the_header_columns() {
+    let harness = Harness::start().await;
+    harness
+        .mount_calendar(vec![
+            event("p1", "2026-11-17T10:00:00Z", "2026-11-17T11:00:00Z"),
+            event("u1", "2026-11-19T10:00:00Z", "2026-11-19T11:00:00Z"),
+        ])
+        .await;
+    let json = run(&harness, 5, 5, true).await;
+    assert_eq!(
+        json,
+        "[{\"id\":\"p1\",\"when\":\"past\",\"start\":\"2026-11-17T10:00:00Z\",\"end\":\"2026-11-17T11:00:00Z\",\"summary\":\"Event p1\"},\
+         {\"id\":\"u1\",\"when\":\"upcoming\",\"start\":\"2026-11-19T10:00:00Z\",\"end\":\"2026-11-19T11:00:00Z\",\"summary\":\"Event u1\"}]\n"
+    );
+    let rows: Vec<Value> = serde_json::from_str(&json).unwrap();
+    let text = run(&harness, 5, 5, false).await;
+    for (row, line) in rows.iter().zip(text.lines().skip(1)) {
+        let cells: Vec<&str> = HEADER
+            .split('\t')
+            .map(|key| row[key].as_str().unwrap())
+            .collect();
+        assert_eq!(cells.join("\t"), line);
+    }
+    assert_eq!(
+        run(&Harness::start_with(Vec::new()).await, 5, 5, true).await,
+        "[]\n"
+    );
+}
+
+#[tokio::test]
+async fn calendar_upcoming_pages_never_exceed_250_events() {
+    for (requested, expected) in [
+        (1, "1"),
+        (100, "100"),
+        (250, "250"),
+        (400, "250"),
+        (1000, "250"),
+    ] {
+        let harness = Harness::start_with(vec![ahead("u1", 1)]).await;
+        let args = gdcli::cli::ListArgs {
+            past: 0,
+            upcoming: requested,
+            json: false,
+        };
+        calendar::list(&harness.api, now(), &args, &mut Vec::new())
+            .await
+            .unwrap();
+        let sizes: Vec<String> = harness
+            .requests(EVENTS_PATH)
+            .await
+            .into_iter()
+            .map(|query| query["maxResults"].clone())
+            .collect();
+        assert_eq!(sizes, [expected], "{requested}");
+    }
 }

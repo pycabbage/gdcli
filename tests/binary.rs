@@ -14,6 +14,14 @@ fn gdcli(args: &[&str]) -> Command {
     command
 }
 
+fn isolated(args: &[&str], dir: &Path) -> Command {
+    let mut command = gdcli(args);
+    command
+        .env("XDG_CONFIG_HOME", dir.join("cfg"))
+        .env("XDG_DATA_HOME", dir.join("data"));
+    command
+}
+
 fn wait(mut child: Child) -> ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -64,9 +72,7 @@ fn missing_client_secret_points_at_setup_and_the_xdg_path() {
         &["meet", "get", "abc-defg-hij"],
         &["docs", "get", "X"],
     ] {
-        let output = run(gdcli(args)
-            .env("XDG_CONFIG_HOME", dir.path().join("cfg"))
-            .env("XDG_DATA_HOME", dir.path().join("data")));
+        let output = run(&mut isolated(args, dir.path()));
         assert!(!output.status.success());
         let message = stderr(&output);
         assert!(message.contains("gdcli setup"), "{message}");
@@ -106,9 +112,7 @@ fn missing_token_fails_fast_pointing_at_login_without_starting_a_flow() {
         &["meet", "get", "abc-defg-hij"],
         &["docs", "get", "X"],
     ] {
-        let output = run(gdcli(args)
-            .env("XDG_CONFIG_HOME", dir.path().join("cfg"))
-            .env("XDG_DATA_HOME", dir.path().join("data")));
+        let output = run(&mut isolated(args, dir.path()));
         assert!(!output.status.success(), "{args:?}");
         let message = stderr(&output);
         assert!(message.contains("gdcli login"), "{message}");
@@ -140,9 +144,7 @@ fn corrupt_token_file_points_at_login() {
     place_secret(&dir.path().join("cfg"));
     std::fs::create_dir_all(dir.path().join("data/gdcli")).unwrap();
     std::fs::write(dir.path().join("data/gdcli/token.json"), "garbage").unwrap();
-    let output = run(gdcli(&["meet", "list"])
-        .env("XDG_CONFIG_HOME", dir.path().join("cfg"))
-        .env("XDG_DATA_HOME", dir.path().join("data")));
+    let output = run(&mut isolated(&["meet", "list"], dir.path()));
     assert!(!output.status.success());
     let message = stderr(&output);
     assert!(message.contains("token.json"), "{message}");
@@ -158,9 +160,7 @@ fn error_output_starts_with_a_lowercase_letter() {
         &["docs", "get", "X"],
         &["meet", "list"],
     ] {
-        let output = run(gdcli(args)
-            .env("XDG_CONFIG_HOME", dir.path().join("cfg"))
-            .env("XDG_DATA_HOME", dir.path().join("data")));
+        let output = run(&mut isolated(args, dir.path()));
         let message = stderr(&output);
         let text = message.strip_prefix("error: ").expect(&message);
         assert!(text.starts_with(char::is_lowercase), "{message}");
@@ -200,7 +200,7 @@ fn empty_ids_exit_with_a_usage_error() {
 }
 
 #[test]
-fn relative_xdg_values_are_ignored_and_a_missing_home_is_reported() {
+fn relative_xdg_values_are_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let output = run(gdcli(&["calendar", "list"])
         .env("XDG_CONFIG_HOME", "relative/config")
@@ -208,10 +208,18 @@ fn relative_xdg_values_are_ignored_and_a_missing_home_is_reported() {
         .env("HOME", dir.path()));
     let expected = format!("{}/.config/gdcli/client_secret.json", dir.path().display());
     assert!(stderr(&output).contains(&expected), "{}", stderr(&output));
-    let output = run(gdcli(&["calendar", "list"]).env_remove("HOME"));
-    assert!(
-        stderr(&output).contains("cannot resolve XDG config home: set XDG_CONFIG_HOME or HOME"),
-        "{}",
-        stderr(&output)
-    );
+}
+
+#[test]
+fn a_blank_tab_exits_with_a_usage_error_before_any_request() {
+    for tab in ["", "  "] {
+        let output = run(&mut gdcli(&["docs", "get", "DOC", "--tab", tab]));
+        assert_eq!(output.status.code(), Some(2), "{tab:?}");
+        assert_eq!(output.stdout, b"");
+        assert!(
+            stderr(&output).contains("invalid tab"),
+            "{}",
+            stderr(&output)
+        );
+    }
 }

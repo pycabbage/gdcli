@@ -34,8 +34,8 @@ pub fn message(error: &anyhow::Error) -> String {
 }
 
 pub fn now() -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp())
-        .unwrap_or_else(|_| OffsetDateTime::now_utc())
+    let now = OffsetDateTime::now_utc();
+    now.replace_nanosecond(0).unwrap_or(now)
 }
 
 async fn execute(command: Command, paths: &Paths) -> Result<()> {
@@ -44,15 +44,24 @@ async fn execute(command: Command, paths: &Paths) -> Result<()> {
     match command {
         Command::Setup => auth::setup::setup(paths, std::io::stdin().lock(), &mut out).await,
         Command::Login => auth::login(paths, &mut out).await,
-        Command::Calendar(CalendarCommand::List) => {
-            calendar::list(&google().await?, now(), &mut out).await
+        Command::Calendar(CalendarCommand::List(args)) => {
+            calendar::list(&google().await?, now(), &args, &mut out).await
         }
-        Command::Calendar(CalendarCommand::Get { id }) => {
-            calendar::get(&google().await?, &id, &mut out).await
+        Command::Calendar(CalendarCommand::Get(args)) => {
+            calendar::get(&google().await?, &args.id, args.json, &mut out).await
         }
-        Command::Meet(MeetCommand::List) => meet::list(&google().await?, now(), &mut out).await,
-        Command::Meet(MeetCommand::Get { id }) => meet::get(&google().await?, &id, &mut out).await,
-        Command::Docs(DocsCommand::Get { id }) => docs::get(&google().await?, &id, &mut out).await,
+        Command::Meet(MeetCommand::List(args)) => {
+            meet::list(&google().await?, now(), &args, &mut out).await
+        }
+        Command::Meet(MeetCommand::Get(args)) => {
+            meet::get(&google().await?, &args.id, args.json, &mut out).await
+        }
+        Command::Docs(DocsCommand::Get { id, tab }) => {
+            docs::get(&google().await?, &id, tab.as_deref(), &mut out).await
+        }
+        Command::Docs(DocsCommand::Metadata { id, json }) => {
+            docs::metadata(&google().await?, &id, json, &mut out).await
+        }
     }
 }
 

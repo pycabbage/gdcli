@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 const APP_DIR: &str = "gdcli";
@@ -11,14 +12,21 @@ pub struct Paths {
     pub data: PathBuf,
 }
 
-fn base(variable: &str, fallback: &str) -> Option<PathBuf> {
-    let absolute =
-        |value: std::ffi::OsString| Some(PathBuf::from(value)).filter(|p| p.is_absolute());
-    std::env::var_os(variable)
+pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+fn base(
+    env: Env,
+    home: &dyn Fn() -> Option<PathBuf>,
+    variable: &str,
+    fallback: &str,
+) -> Option<PathBuf> {
+    let absolute = |value: OsString| Some(PathBuf::from(value)).filter(|p| p.is_absolute());
+    env(variable)
         .and_then(absolute)
         .or_else(|| {
-            std::env::var_os("HOME")
+            env("HOME")
                 .and_then(absolute)
+                .or_else(home)
                 .map(|home| home.join(fallback))
         })
         .map(|path| path.join(APP_DIR))
@@ -33,10 +41,14 @@ impl Paths {
     }
 
     pub fn from_xdg() -> Result<Self> {
+        Self::resolve(&|name| std::env::var_os(name), &std::env::home_dir)
+    }
+
+    pub fn resolve(env: Env, home: &dyn Fn() -> Option<PathBuf>) -> Result<Self> {
         Ok(Self::new(
-            base("XDG_CONFIG_HOME", ".config")
+            base(env, home, "XDG_CONFIG_HOME", ".config")
                 .context("cannot resolve XDG config home: set XDG_CONFIG_HOME or HOME")?,
-            base("XDG_DATA_HOME", ".local/share")
+            base(env, home, "XDG_DATA_HOME", ".local/share")
                 .context("cannot resolve XDG data home: set XDG_DATA_HOME or HOME")?,
         ))
     }

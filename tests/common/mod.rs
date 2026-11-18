@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use gdcli::cli::ListArgs;
 use gdcli::google::Google;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::Client;
@@ -8,7 +9,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{any, header, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 use yup_oauth2::AccessTokenAuthenticator;
 
@@ -16,6 +17,18 @@ pub const EVENTS_PATH: &str = "/calendar/v3/calendars/primary/events";
 pub const TOKEN: &str = "test-token";
 pub const EVENT_TYPES: [&str; 4] = ["default", "focusTime", "outOfOffice", "fromGmail"];
 pub const BEARER: &str = "Bearer test-token";
+
+fn local(url: &url::Url) -> bool {
+    url.host_str() == Some("127.0.0.1")
+}
+
+pub fn args() -> ListArgs {
+    ListArgs {
+        past: 5,
+        upcoming: 5,
+        json: false,
+    }
+}
 
 pub struct Harness {
     pub server: MockServer,
@@ -36,8 +49,21 @@ impl Harness {
             .build()
             .await
             .unwrap();
-        let api = Google::new(client, auth, &root, &root);
+        let api = Google::new(client, auth, [&root, &root, &root, &root], local);
         Self { server, api }
+    }
+
+    pub async fn start_with(events: Vec<Value>) -> Self {
+        let harness = Self::start().await;
+        harness.mount_calendar(events).await;
+        harness
+    }
+
+    pub async fn fail_all(&self, status: u16, body: &str) {
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .mount(&self.server)
+            .await;
     }
 
     pub async fn mount_json(&self, route: &str, body: Value) {
@@ -166,6 +192,11 @@ pub fn calendar_fake(events: Vec<Value>) -> impl Fn(&Request) -> ResponseTemplat
         let size: usize = query
             .get("maxResults")
             .map_or(250, |size| size.parse().unwrap());
+        if size == 0 {
+            return ResponseTemplate::new(400).set_body_json(
+                json!({"error": {"code": 400, "message": "maxResults must be positive"}}),
+            );
+        }
         let end = (offset + size).min(hits.len());
         let next = (end < hits.len()).then(|| end.to_string());
         ResponseTemplate::new(200)
@@ -175,4 +206,81 @@ pub fn calendar_fake(events: Vec<Value>) -> impl Fn(&Request) -> ResponseTemplat
 
 pub fn text(buffer: Vec<u8>) -> String {
     String::from_utf8(buffer).unwrap()
+}
+
+fn token(name: &str, value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let plain = !text.is_empty()
+                && !text.contains(|c: char| c.is_whitespace() || c == '"' || c == '=');
+            let shown = if plain {
+                text.clone()
+            } else {
+                serde_json::to_string(text).unwrap()
+            };
+            Some(format!("{name}={shown}"))
+        }
+        Value::Bool(_) | Value::Number(_) => Some(format!("{name}={value}")),
+        _ => None,
+    }
+}
+
+fn tokens(value: &Value, found: &mut Vec<String>) {
+    for (name, item) in value.as_object().into_iter().flatten() {
+        match item {
+            Value::Object(_) => tokens(item, found),
+            other => found.extend(token(name, other)),
+        }
+    }
+}
+
+fn expected(key: &str, value: &Value, lines: &mut Vec<(String, String)>) {
+    let singular = key.strip_suffix('s').unwrap_or(key);
+    match value {
+        Value::Array(items) if items.is_empty() => {
+            lines.push((singular.to_owned(), "none".to_owned()));
+        }
+        Value::Array(items) => items
+            .iter()
+            .for_each(|item| expected(singular, item, lines)),
+        Value::Object(map) => {
+            let mut found = Vec::new();
+            tokens(value, &mut found);
+            if !found.is_empty() {
+                lines.push((key.to_owned(), found.join(" ")));
+            }
+            for (name, item) in map.iter().filter(|(_, item)| item.is_array()) {
+                expected(name, item, lines);
+            }
+        }
+        Value::String(text) => {
+            let text = text.replace("\r\n", "\n").replace('\r', "\n");
+            lines.push((key.to_owned(), text.trim().replace('\n', "\n  ")));
+        }
+        Value::Null => {}
+        other => lines.push((key.to_owned(), other.to_string())),
+    }
+}
+
+fn logical_lines(text: &str) -> Vec<(String, String)> {
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        if let (true, Some((_, value))) = (line.starts_with("  "), lines.last_mut()) {
+            value.push('\n');
+            value.push_str(line);
+        } else {
+            let (key, value) = line.split_once(": ").unwrap_or((line, ""));
+            lines.push((key.to_owned(), value.to_owned()));
+        }
+    }
+    lines
+}
+
+pub fn assert_same_information(text: &str, json: &str) {
+    let record: Value = serde_json::from_str(json).unwrap();
+    let mut lines = Vec::new();
+    for (key, item) in record.as_object().unwrap() {
+        expected(key, item, &mut lines);
+    }
+    assert_eq!(logical_lines(text), lines, "{text}");
 }

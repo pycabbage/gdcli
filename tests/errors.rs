@@ -14,15 +14,12 @@ const HTML: &str =
 #[tokio::test]
 async fn non_json_error_bodies_print_only_the_status() {
     let harness = Harness::start().await;
-    Mock::given(any())
-        .respond_with(ResponseTemplate::new(404).set_body_string(HTML))
-        .mount(&harness.server)
-        .await;
-    let error = calendar::get(&harness.api, "x", &mut Vec::new())
+    harness.fail_all(404, HTML).await;
+    let error = calendar::get(&harness.api, "x", false, &mut Vec::new())
         .await
         .unwrap_err();
     assert_eq!(gdcli::message(&error), "google api error 404 Not Found");
-    let error = docs::get(&harness.api, "https://example.com/x", &mut Vec::new())
+    let error = docs::get(&harness.api, "https://example.com/x", None, &mut Vec::new())
         .await
         .unwrap_err();
     assert_eq!(gdcli::message(&error), "google api error 404 Not Found");
@@ -48,7 +45,7 @@ async fn meet_errors_never_echo_the_response_body() {
             .respond_with(ResponseTemplate::new(502).set_body_string(body))
             .mount(&harness.server)
             .await;
-        let error = meet::get(&harness.api, "evt1", &mut Vec::new())
+        let error = meet::get(&harness.api, "evt1", false, &mut Vec::new())
             .await
             .unwrap_err();
         assert_eq!(gdcli::message(&error), "google api error 502 Bad Gateway");
@@ -65,7 +62,7 @@ async fn meet_path_segments_are_encoded_one_per_id() {
                 meet_event("evt1", code, "2026-11-17T01:00:00Z", "2026-11-17T02:00:00Z"),
             )
             .await;
-        let _ = meet::get(&harness.api, "evt1", &mut Vec::new()).await;
+        let _ = meet::get(&harness.api, "evt1", false, &mut Vec::new()).await;
         let meet_requests: Vec<_> = harness
             .server
             .received_requests()
@@ -109,7 +106,7 @@ async fn a_command_that_never_gets_an_answer_fails_at_the_deadline() {
     let started = Instant::now();
     let error = with_deadline(
         Some(Duration::from_secs(1)),
-        calendar::list(&harness.api, now(), &mut Vec::new()),
+        calendar::list(&harness.api, now(), &common::args(), &mut Vec::new()),
     )
     .await
     .unwrap_err();
@@ -124,7 +121,7 @@ async fn the_deadline_passes_results_through() {
     let mut out = Vec::new();
     with_deadline(
         Some(Duration::from_secs(30)),
-        calendar::list(&harness.api, now(), &mut out),
+        calendar::list(&harness.api, now(), &common::args(), &mut out),
     )
     .await
     .unwrap();
@@ -157,7 +154,7 @@ async fn dot_segments_are_rejected_before_their_request() {
                 meet_event("evt1", code, "2026-11-17T01:00:00Z", "2026-11-17T02:00:00Z"),
             )
             .await;
-        let error = meet::get(&harness.api, "evt1", &mut Vec::new())
+        let error = meet::get(&harness.api, "evt1", false, &mut Vec::new())
             .await
             .unwrap_err();
         assert_eq!(gdcli::message(&error), format!("invalid id \"{code}\""));
@@ -189,21 +186,15 @@ async fn unusual_error_and_response_bodies_map_to_fixed_short_messages() {
         (503, "", "google api error 503 Service Unavailable"),
     ] {
         let harness = Harness::start().await;
-        Mock::given(any())
-            .respond_with(ResponseTemplate::new(status).set_body_string(body))
-            .mount(&harness.server)
-            .await;
-        let error = calendar::get(&harness.api, "x", &mut Vec::new())
+        harness.fail_all(status, body).await;
+        let error = calendar::get(&harness.api, "x", false, &mut Vec::new())
             .await
             .unwrap_err();
         assert_eq!(gdcli::message(&error), expected);
     }
     let harness = Harness::start().await;
-    Mock::given(any())
-        .respond_with(ResponseTemplate::new(200).set_body_string("<html>secret page body</html>"))
-        .mount(&harness.server)
-        .await;
-    let error = calendar::get(&harness.api, "x", &mut Vec::new())
+    harness.fail_all(200, "<html>secret page body</html>").await;
+    let error = calendar::get(&harness.api, "x", false, &mut Vec::new())
         .await
         .unwrap_err();
     let message = gdcli::message(&error);
@@ -212,4 +203,30 @@ async fn unusual_error_and_response_bodies_map_to_fixed_short_messages() {
         "{message}"
     );
     assert!(!message.contains("secret page body"), "{message}");
+}
+
+#[tokio::test]
+async fn the_production_client_refuses_plain_http() {
+    let server = wiremock::MockServer::start().await;
+    let client = gdcli::google::https_builder().build::<_, String>(gdcli::google::connector());
+    let request = http::Request::get(format!("{}/plain", server.uri()))
+        .body(String::new())
+        .unwrap();
+    assert!(client.request(request).await.is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn long_google_messages_are_cut_at_three_hundred_characters() {
+    let harness = Harness::start().await;
+    let long = "é".repeat(400);
+    let body = json!({"error": {"message": long}}).to_string();
+    harness.fail_all(400, &body).await;
+    let error = calendar::get(&harness.api, "x", false, &mut Vec::new())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        gdcli::message(&error),
+        format!("google api error 400: {}...", "é".repeat(300))
+    );
 }

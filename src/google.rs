@@ -1,7 +1,8 @@
 use crate::auth::{self, SCOPES};
 use crate::paths::Paths;
 use anyhow::{Context, Result, anyhow};
-use http::{Request, Response, StatusCode, header::AUTHORIZATION};
+use http::header::{AUTHORIZATION, CONTENT_TYPE, LOCATION};
+use http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
@@ -32,39 +33,110 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+const MESSAGE_LIMIT: usize = 300;
+const MARKDOWN_TYPES: [&str; 2] = ["text/markdown", "text/x-markdown"];
+const ROOTS: [&str; 4] = [
+    "https://www.googleapis.com/",
+    "https://meet.googleapis.com/",
+    "https://docs.googleapis.com/",
+    "https://docs.google.com/",
+];
+
+pub fn googleusercontent(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| host.ends_with(".googleusercontent.com"))
+}
+
 pub struct Google {
     client: Client<Https, String>,
     auth: Authenticator<Https>,
+    redirect_allowed: fn(&Url) -> bool,
     pub calendar: String,
     pub drive: String,
     pub meet: String,
+    pub docs_api: String,
+    docs_web: String,
 }
 
 impl Google {
     pub fn new(
         client: Client<Https, String>,
         auth: Authenticator<Https>,
-        google_root: &str,
-        meet_root: &str,
+        roots: [&str; 4],
+        redirect_allowed: fn(&Url) -> bool,
     ) -> Self {
+        let [google, meet, docs_api, docs_web] = roots;
         Self {
             client,
             auth,
-            calendar: format!("{google_root}calendar/v3/"),
-            drive: format!("{google_root}drive/v3/"),
-            meet: format!("{meet_root}v2/"),
+            redirect_allowed,
+            calendar: format!("{google}calendar/v3/"),
+            drive: format!("{google}drive/v3/"),
+            meet: format!("{meet}v2/"),
+            docs_api: format!("{docs_api}v1/"),
+            docs_web: docs_web.to_owned(),
         }
     }
 
     pub async fn connect(paths: &Paths) -> Result<Self> {
         let client = https_builder().build(connector());
         let auth = auth::authenticator(paths, false, client.clone()).await?;
-        Ok(Self::new(
-            client,
-            auth,
-            "https://www.googleapis.com/",
-            "https://meet.googleapis.com/",
-        ))
+        Ok(Self::new(client, auth, ROOTS, googleusercontent))
+    }
+
+    fn url(root: &str, segments: &[&str], query: &[(&str, &str)]) -> Result<Url> {
+        let mut url = Url::parse(root)?;
+        {
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|()| anyhow!("invalid root url"))?;
+            path.pop_if_empty();
+            for segment in segments {
+                anyhow::ensure!(!matches!(*segment, "." | ".."), "invalid id {segment:?}");
+                path.push(segment);
+            }
+        }
+        url.query_pairs_mut().extend_pairs(query);
+        Ok(url)
+    }
+
+    async fn get(&self, url: &Url, bearer: bool) -> Result<Response<Incoming>> {
+        let mut request = Request::get(url.as_str());
+        if bearer {
+            let token = self
+                .auth
+                .token(&SCOPES)
+                .await
+                .context("token retrieval failed")?;
+            let token = token
+                .token()
+                .context("token retrieval failed: no access token")?;
+            request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let response = self
+            .client
+            .request(request.body(String::new())?)
+            .await
+            .context("request failed")?;
+        Ok(response)
+    }
+
+    async fn checked(response: Response<Incoming>) -> Result<Response<Incoming>> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let body = response.into_body().collect().await?.to_bytes();
+        let message = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|body| Some(body.pointer("/error/message")?.as_str()?.to_owned()))
+            .map(|message| match message.char_indices().nth(MESSAGE_LIMIT) {
+                Some((end, _)) => format!("{}...", &message[..end]),
+                None => message,
+            });
+        Err(ApiError { status, message }.into())
     }
 
     pub async fn send(
@@ -73,43 +145,35 @@ impl Google {
         segments: &[&str],
         query: &[(&str, &str)],
     ) -> Result<Response<Incoming>> {
-        let mut url = Url::parse(root)?;
-        {
-            let mut path = url
-                .path_segments_mut()
-                .map_err(|()| anyhow::anyhow!("invalid root url"))?;
-            path.pop_if_empty();
-            for segment in segments {
-                anyhow::ensure!(!matches!(*segment, "." | ".."), "invalid id {segment:?}");
-                path.push(segment);
-            }
+        let url = Self::url(root, segments, query)?;
+        Self::checked(self.get(&url, true).await?).await
+    }
+
+    pub async fn export_tab(&self, id: &str, tab: &str) -> Result<Response<Incoming>> {
+        let query = [("format", "md"), ("tab", tab)];
+        let url = Self::url(&self.docs_web, &["document", "d", id, "export"], &query)?;
+        let mut response = self.get(&url, true).await?;
+        if response.status().is_redirection() {
+            let target = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|location| url.join(location.to_str().ok()?).ok())
+                .filter(|target| (self.redirect_allowed)(target))
+                .context("export redirected to an unexpected host")?;
+            response = self.get(&target, false).await?;
         }
-        url.query_pairs_mut().extend_pairs(query);
-        let token = self
-            .auth
-            .token(&SCOPES)
-            .await
-            .context("token retrieval failed")?;
-        let token = token
-            .token()
-            .context("token retrieval failed: no access token")?;
-        let request = Request::get(url.as_str())
-            .header(AUTHORIZATION, format!("Bearer {token}"))
-            .body(String::new())?;
-        let response = self
-            .client
-            .request(request)
-            .await
-            .context("request failed")?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        let body = response.into_body().collect().await?.to_bytes();
-        let message = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .and_then(|body| Some(body.pointer("/error/message")?.as_str()?.to_owned()));
-        Err(ApiError { status, message }.into())
+        let response = Self::checked(response).await?;
+        let markdown = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|kind| kind.to_str().ok())
+            .is_some_and(|kind| {
+                MARKDOWN_TYPES
+                    .iter()
+                    .any(|accepted| kind.starts_with(accepted))
+            });
+        anyhow::ensure!(markdown, "unexpected export content type");
+        Ok(response)
     }
 
     pub async fn json(

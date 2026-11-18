@@ -1,5 +1,6 @@
+use crate::cli::ListArgs;
 use crate::google::Google;
-use crate::output::row;
+use crate::output::table;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -10,10 +11,9 @@ use time::{Duration, OffsetDateTime};
 pub const CALENDAR_HEADER: &str = "id\twhen\tstart\tend\tsummary";
 pub const MEET_HEADER: &str = "id\twhen\tstart\tend\tmeeting_code\tsummary";
 
-const WANTED: usize = 5;
 const WINDOWS_DAYS: [i64; 4] = [7, 30, 180, 730];
 const PAST_PAGE_SIZE: &str = "250";
-const MEET_UPCOMING_PAGE_SIZE: &str = "25";
+const MEET_MIN_PAGE_SIZE: usize = 25;
 const EVENT_TYPES: [&str; 4] = ["default", "focusTime", "outOfOffice", "fromGmail"];
 const CALENDAR_FIELDS: &str = "nextPageToken,items(id,status,summary,start,end)";
 const MEET_FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,conferenceData(conferenceId,conferenceSolution(key(type))))";
@@ -43,6 +43,10 @@ pub fn stamp_millis(moment: OffsetDateTime) -> String {
     format!("{}.000Z", stamp(moment).trim_end_matches('Z'))
 }
 
+pub fn utc(raw: &str) -> String {
+    OffsetDateTime::parse(raw, &Rfc3339).map_or_else(|_| raw.to_owned(), stamp)
+}
+
 pub fn timed(event: &Value, which: &str) -> Option<OffsetDateTime> {
     let date_time = event.get(which)?.get("dateTime")?.as_str()?;
     OffsetDateTime::parse(date_time, &Rfc3339).ok()
@@ -58,7 +62,7 @@ fn instant(event: &Value, which: &str) -> Option<OffsetDateTime> {
 pub fn render_time(event: &Value, which: &str) -> String {
     match event.get(which).and_then(|moment| moment.get("date")) {
         Some(Value::String(date)) => date.clone(),
-        _ => instant(event, which).map(stamp).unwrap_or_default(),
+        _ => timed(event, which).map(stamp).unwrap_or_default(),
     }
 }
 
@@ -116,14 +120,18 @@ async fn upcoming(
     now: OffsetDateTime,
     fields: &str,
     page_size: &str,
+    wanted: usize,
     keep: impl Fn(&Value) -> bool,
 ) -> Result<Vec<Value>> {
-    let mut found = Vec::with_capacity(WANTED);
+    let mut found = Vec::with_capacity(wanted);
+    if wanted == 0 {
+        return Ok(found);
+    }
     pages(google, fields, page_size, now, None, |event| {
         if text(&event, "/status") != "cancelled" && !has_ended(&event, now) && keep(&event) {
             found.push(event);
         }
-        found.len() < WANTED
+        found.len() < wanted
     })
     .await?;
     Ok(found)
@@ -133,15 +141,19 @@ async fn past(
     google: &Google,
     now: OffsetDateTime,
     fields: &str,
+    wanted: usize,
     keep: impl Fn(&Value) -> bool,
 ) -> Result<Vec<Value>> {
-    let mut tail = VecDeque::with_capacity(WANTED + 1);
+    let mut tail = VecDeque::with_capacity(wanted + 1);
     for days in WINDOWS_DAYS {
+        if wanted == 0 {
+            break;
+        }
         tail.clear();
         let from = now - Duration::days(days);
         pages(google, fields, PAST_PAGE_SIZE, from, Some(now), |event| {
             if text(&event, "/status") != "cancelled" && has_ended(&event, now) && keep(&event) {
-                if tail.len() == WANTED {
+                if tail.len() == wanted {
                     tail.pop_front();
                 }
                 tail.push_back(event);
@@ -149,7 +161,7 @@ async fn past(
             true
         })
         .await?;
-        if tail.len() == WANTED {
+        if tail.len() == wanted {
             break;
         }
     }
@@ -160,27 +172,34 @@ pub async fn list(
     google: &Google,
     now: OffsetDateTime,
     meet: bool,
+    args: &ListArgs,
     out: &mut impl Write,
 ) -> Result<()> {
     let keep = |event: &Value| !meet || meeting_code(event).is_some();
-    let (fields, page_size, header) = if meet {
-        (MEET_FIELDS, MEET_UPCOMING_PAGE_SIZE, MEET_HEADER)
+    let (past_count, upcoming_count) = (usize::from(args.past), usize::from(args.upcoming));
+    let (fields, floor, header) = if meet {
+        (MEET_FIELDS, MEET_MIN_PAGE_SIZE, MEET_HEADER)
     } else {
-        (CALENDAR_FIELDS, "5", CALENDAR_HEADER)
+        (CALENDAR_FIELDS, 1, CALENDAR_HEADER)
     };
+    let page_size = upcoming_count.max(floor).min(250).to_string();
     let (past, upcoming) = tokio::try_join!(
-        past(google, now, fields, keep),
-        upcoming(google, now, fields, page_size, keep),
+        past(google, now, fields, past_count, keep),
+        upcoming(google, now, fields, &page_size, upcoming_count, keep),
     )?;
-    writeln!(out, "{header}")?;
+    let mut rows = Vec::new();
     for (when, events) in [("past", &past), ("upcoming", &upcoming)] {
         for event in events {
-            let (start, end) = (render_time(event, "start"), render_time(event, "end"));
-            let mut columns = vec![text(event, "/id"), when, &start, &end];
-            columns.extend(meeting_code(event).filter(|_| meet));
-            columns.push(text(event, "/summary"));
-            row(out, &columns)?;
+            let mut row = vec![
+                text(event, "/id").to_owned(),
+                when.to_owned(),
+                render_time(event, "start"),
+                render_time(event, "end"),
+            ];
+            row.extend(meeting_code(event).filter(|_| meet).map(str::to_owned));
+            row.push(text(event, "/summary").to_owned());
+            rows.push(row);
         }
     }
-    Ok(())
+    Ok(table(out, header, &rows, args.json)?)
 }

@@ -7,18 +7,21 @@ Agent-oriented CLI for Google Workspace: Meet, Calendar and Docs. Rust. This fil
 ```
 gdcli setup              auth setup wizard: have the user place the key, then start the OAuth login flow
 gdcli login              OAuth login flow only (setup without the wizard part)
-gdcli meet list          latest 10 Google Meet meetings (past 5, future 5)
+gdcli meet list          latest 10 Google Meet meetings (default past 5, future 5; --past N --upcoming N, alias --future)
 gdcli meet get <id>      show Meet meeting info
-gdcli calendar list      latest 10 calendar events (past 5, future 5)
+gdcli calendar list      latest 10 calendar events (default past 5, future 5; --past N --upcoming N, alias --future)
 gdcli calendar get <id>  get and show an event
-gdcli docs get <id>      get a Google Doc as Markdown
+gdcli docs get <id>      get a Google Doc as Markdown; --tab <id|name> selects one tab
+gdcli docs metadata <id> metadata of a Google Doc
 ```
 
+- `--json` (same information as JSON) exists on meet/calendar list and get and on `docs metadata`, never on `docs get`.
 - `docs get`: use an official Markdown-output API if one exists, otherwise write own Markdown conversion. Option `--json` (raw JSON output) exists only if no official Markdown API exists and raw JSON is available; otherwise drop the option.
 - Current decision: Drive `files.export` with `text/markdown` is the official Markdown API, so `docs get` has NO `--json`.
 
 ## Rules
 
+- Agents run only `git add` and `git commit` (owner rule); the owner pushes.
 - Pursue performance above all; optimize memory usage.
 - User-touched config (e.g. client_secret.json) lives in `$XDG_CONFIG_HOME/gdcli/`; program-touched state/cache (e.g. token) lives in `$XDG_DATA_HOME/gdcli/`.
 - No code comments at all, in any file type (including YAML/TOML). Needed information goes in English docs under `<repo_root>/docs/{design,...}`.
