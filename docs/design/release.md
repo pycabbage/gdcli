@@ -21,7 +21,7 @@
 
 ## Release workflow
 
-- Trigger: `push` of tags matching `v*`. Tags are created by the human owner (agents never create tags).
+- Trigger: `push` of tags matching `v*`. Tags are created and pushed by the PM agents (see Release management).
 - Permissions (workflow level, one job): `contents: write` (create the release and upload assets with the built-in `GITHUB_TOKEN`), `id-token: write` and `attestations: write` (build provenance attestation, see Attestations). No secrets, no `artifact-metadata: write` (storage records exist only with `push-to-registry`, which is not used).
 - Steps, in order:
   1. `actions/checkout` with `fetch-depth: 0` (GoReleaser needs full history and tags).
@@ -75,8 +75,8 @@ Works with and without the repository setting "Enable release immutability" (Set
 - `use_existing_draft: true`: GitHub's get-release-by-tag endpoint returns published releases only, so without this option a re-run would create a second draft for the same tag. With it, the re-run finds the draft named after the tag and reuses it.
 - `replace_existing_artifacts: true`: when an upload hits `422 already_exists` (assets left by the failed run), GoReleaser deletes that asset and uploads it again. Rebuilds are not byte-identical, so the retried assets come from the new build, and all of them are checked before publishing as one set.
 - `preflight.fail_on_error: true` (GoReleaser 2.18+): the check that the tag is not already an immutable release runs before the build and aborts at once with `release vX already exists and is immutable, it cannot be updated`, instead of warning and failing after the build.
-- Re-run after failure: fix the cause, then re-run the failed workflow run for the same tag (Actions, "Re-run all jobs", or `gh run rerun <run-id>`). The tag does not need to be recreated. If the release was already published (immutable), the tag cannot be reused: bump the version and push a new tag.
-- Tag: created and pushed by the owner before the workflow starts; GoReleaser never creates it.
+- Recovery after a failed run, and the rule for a published release: see Release management. A published release (immutable or not) is never reused.
+- Tag: created and pushed before the workflow starts (the push triggers it); GoReleaser never creates it.
 - Check the setting: `gh api repos/pycabbage/gdcli/immutable-releases` (200 enabled, 404 disabled; needs admin read access). After a release, `gh release verify <tag>` confirms it is immutable and `gh release verify-asset <tag> <file>` checks a downloaded asset.
 - Tested locally against a mock GitHub API server (scratch, not in the repo) with GoReleaser v2.20.2 and this config: the call order was `POST release (draft)`, uploads of both archives and the checksums file, `PATCH draft=false`; an injected upload failure left the draft unpublished; the re-run reused the draft, replaced the existing assets and published; a further re-run on the published immutable release stopped in preflight. Not tested against real GitHub immutable releases (no admin access to the repository from the agent environment, and no releases may be created by agents).
 
@@ -113,10 +113,51 @@ gh actions-lock --verify
 gh actions-lock --verify-local
 ```
 
+## Release management
+
+Who: the PM agents manage tags and releases. The human owner pushes only exceptionally.
+
+Tag policy:
+
+- `vX.Y.Z`, annotated (`git tag -a`), always equal to `v` plus the `version` in `Cargo.toml`, so that `gdcli --version` (clap reads `CARGO_PKG_VERSION`) always matches the tag. The release workflow triggers on `v*`.
+- SemVer: patch for fixes, minor for features. While the version is 0.x, breaking changes also bump minor. The first release is `v0.1.0`.
+- Never force-push a branch. Never move, rewrite or delete a tag whose release was published. A tag whose run failed before the publish call (no release, or a draft) was never usable and may be deleted and re-created; this is the only permitted tag deletion.
+
+Procedure (nothing is published by hand: GoReleaser publishes the draft at the end of the run):
+
+1. Set `version` in `Cargo.toml`, then run `cargo check` so cargo updates `Cargo.lock` (never edit `Cargo.lock` by hand).
+2. Commit (after the reviewer passed) and push to `main`.
+3. Wait for CI to be green on that commit: `gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)" --limit 1`, then `gh run watch <run-id> --exit-status`. If the list is empty right after the push, repeat the command.
+4. Create the annotated tag on that commit: `git tag -a vX.Y.Z -m vX.Y.Z`.
+5. Push it: `git push origin vX.Y.Z`.
+6. Watch the release run: `gh run list --workflow release.yml --branch vX.Y.Z --limit 1` (a tag-triggered run reports the tag name as its branch; if the list is empty right after the push, repeat the command), then `gh run watch <run-id> --exit-status`.
+7. Verify (checklist below). The tag run itself is the test of the pipeline.
+
+Verification checklist, in a clean directory (`cd "$(mktemp -d)"`), with `vX.Y.Z` as the tag:
+
+1. Release state and assets: `gh release view vX.Y.Z --repo pycabbage/gdcli --json tagName,isDraft,isPrerelease,isImmutable,assets --jq '{tagName,isDraft,isPrerelease,isImmutable,assets:[.assets[].name]}'`. Expected: `isDraft` false, `isPrerelease` false, exactly the assets `gdcli_checksums.txt`, `gdcli_linux_aarch64.tar.gz`, `gdcli_linux_x86_64.tar.gz`. `isImmutable` is true only when the repository setting is enabled (the setting itself needs admin access to read).
+2. Download everything: `gh release download vX.Y.Z --repo pycabbage/gdcli`.
+3. Checksums: `sha256sum -c gdcli_checksums.txt` (both archives OK).
+4. Build provenance attestation: `gh attestation verify gdcli_linux_$(uname -m).tar.gz --repo pycabbage/gdcli`.
+5. Release attestation, meaningful when the release is immutable: `gh release verify vX.Y.Z --repo pycabbage/gdcli` and `gh release verify-asset vX.Y.Z gdcli_linux_$(uname -m).tar.gz --repo pycabbage/gdcli`.
+6. Binary: `tar -xzf gdcli_linux_$(uname -m).tar.gz && ./gdcli --version && ./gdcli --help`. The version must print `X.Y.Z`; the archive must contain only `gdcli` at its root (`tar -tzf`).
+7. README install path in a clean home: `HOME="$(mktemp -d)" bash -c 'curl -fsSL -o gdcli.tar.gz https://github.com/pycabbage/gdcli/releases/latest/download/gdcli_linux_$(uname -m).tar.gz && mkdir -p ~/.local/bin && tar -xzf gdcli.tar.gz -C ~/.local/bin gdcli && ~/.local/bin/gdcli --version'` (the README's first two lines, plus a version check instead of the interactive `gdcli setup`). This also proves that `releases/latest/download` resolves to the new release.
+
+Failure and recovery:
+
+| Situation | Action |
+|---|---|
+| The tag run failed before publishing (any step: tests, build, upload); the release, if any, is still a draft | Delete the remote and local tag: `git push --delete origin vX.Y.Z` and `git tag -d vX.Y.Z`. Delete the leftover draft only if `gh release view vX.Y.Z --repo pycabbage/gdcli --json isDraft --jq .isDraft` prints `true`: `gh release delete vX.Y.Z --repo pycabbage/gdcli --yes`. Fix the cause, commit, push, wait for CI, then tag the same version again. |
+| The release was published (immutable or not) but something is wrong (bad asset, wrong version, any failed verification) | Never reuse that version or tag, and never edit or delete its assets. Fix the cause, bump the patch version in `Cargo.toml`, and release the next patch with the normal procedure. |
+| The attest step failed after GoReleaser published | The release is already published: same as the previous row (ship the next patch). A published release without a provenance attestation is not repaired in place. |
+| The tag was pushed on the wrong commit before any publish | Same as the first row, then tag the right commit. |
+
+Only a release that was already published burns its version. Before the publish call nothing is public or locked, so deleting that unusable tag and its draft and tagging again is safe. The tag rules above apply throughout: no force-push of branches, and a tag whose release was published is never moved, rewritten or deleted.
+
 ## Repository requirements
 
 - GitHub Actions enabled; workflow permissions may stay at the read-only default, since `release.yml` requests `contents: write`, `id-token: write` and `attestations: write` itself.
 - No secrets or variables to configure.
 - Not verified on GitHub (only locally): the workflows themselves, including `setup-zig`, `setup-uv`, `uv tool install cargo-zigbuild` on a runner and the attest step. The first tag run is the first real test.
 - The lockfile and workflows must be committed together.
-- Release procedure: push the commit, wait for CI green, the owner creates and pushes a `vX.Y.Z` tag, the release workflow creates a draft release, attaches the assets and publishes it.
+- Release procedure: see Release management. The release workflow creates a draft release, attaches the assets, publishes it, then attests the archives.

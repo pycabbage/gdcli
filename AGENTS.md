@@ -21,7 +21,7 @@ gdcli docs metadata <id> metadata of a Google Doc
 
 ## Rules
 
-- Agents run only `git add` and `git commit` (owner rule); the owner pushes.
+- Agents may run `git add`, `commit`, `push` and `tag`; never `git config`, never force-push, never rewrite or delete a tag whose release was published.
 - Pursue performance above all; optimize memory usage.
 - User-touched config (e.g. client_secret.json) lives in `$XDG_CONFIG_HOME/gdcli/`; program-touched state/cache (e.g. token) lives in `$XDG_DATA_HOME/gdcli/`.
 - No code comments at all, in any file type (including YAML/TOML). Needed information goes in English docs under `<repo_root>/docs/{design,...}`.
@@ -36,7 +36,7 @@ gdcli docs metadata <id> metadata of a Google Doc
 - Never hand-edit tool-generated files (`.github/workflows/actions.lock`, `Cargo.lock`) without a strong reason; the machine-generated headers of `actions.lock` and `Cargo.lock` are the only comment-like text allowed.
 - Commit only after the reviewer passes.
 - Git: author/credentials are preconfigured. NEVER run any `git config` command; NEVER read or write `.git/config`.
-- Deadline: 2026-11-18 08:30:00 JST. Agents do everything except creating tags and end-to-end tests with real credentials (human owner).
+- Tags and releases are managed by agents (tag = `v` + Cargo.toml version; procedure in `docs/design/release.md`). End-to-end tests with real credentials run only with the owner's installed credentials.
 - Violating these instructions may get the deliverables deleted.
 
 ## Docs index
