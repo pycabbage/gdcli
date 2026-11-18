@@ -1,0 +1,28 @@
+version: 2
+project_name: gdcli
+
+builds:
+  - id: gdcli
+    builder: rust
+    binary: gdcli
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+    flags:
+      - --release
+      - --locked
+
+archives:
+  - id: gdcli
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else if eq .Arch "arm64" }}aarch64{{ else }}{{ .Arch }}{{ end }}
+    builds_info:
+      owner: root
+      group: root
+    files:
+      - none*
+
+checksum:
+  name_template: "{{ .ProjectName }}_checksums.txt"
