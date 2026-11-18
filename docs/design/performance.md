@@ -24,12 +24,12 @@ Priorities: startup time, resident memory, bytes transferred, number of round tr
 
 | Measurement | Before the REST layer (generated Google crates, chrono) | After the REST layer | Now (JSON, tabs, metadata, counts) |
 |---|---|---|---|
-| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,661,552 bytes |
+| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,662,192 bytes |
 | Unique packages in the normal dependency tree, including gdcli (`cargo tree -e normal --prefix none --no-dedupe \| sed 's/ (.*//' \| sort -u \| wc -l`) | 123 | 108 | 109 (`foldhash` through `preserve_order`) |
 | Peak RSS of `gdcli --help` (`/usr/bin/time -f %M`, 3 runs) | 3576, 3576, 3632 KB | 3468, 3388, 3376 KB | 3536, 3700, 3572 KB |
 | Peak RSS of a command with a real HTTPS round trip to Google and an invalid token (so the answer is a small 401) | 6.0 to 6.3 MB | 5.6 to 5.8 MB | `calendar list` 5728, `meet list` 5888, `docs get --tab` 5600, `docs metadata` 5888 KB |
 | TCP connections to port 443 per command (`strace -f -e trace=connect -o out gdcli <command>`, then `grep -c 'sin_port=htons(443)\|sin6_port=htons(443)' out`; invalid-token setup) | `calendar list` 2, `meet get` 4 (before HTTP/2-only) | 1 for every command | 1 for every command except `docs metadata`: 2, because Drive (`www.googleapis.com`) and the Docs API (`docs.googleapis.com`) are two hosts, one HTTP/2 connection each, run concurrently |
-| Source lines, `src/` (non-blank, after `cargo fmt`) | 1282 | 929 | 1323 (log in `code-reduction.md`) |
+| Source lines, `src/` (non-blank, after `cargo fmt`) | 1282 | 929 | 1324 (log in `code-reduction.md`) |
 
 With an invalid token `meet get` and `docs get --tab` stop after the first request, so their connection counts for the full flows (events, space, records, artifacts; tab list, export and the redirect to the content host) have to be measured with a valid token. The tab export touches three hosts by design: `docs.googleapis.com` (tab list), `docs.google.com` (export) and the `googleusercontent.com` content host (the redirect target, fetched without the token).
 

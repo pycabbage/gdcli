@@ -228,7 +228,7 @@ fn token(name: &str, value: &Value) -> Option<String> {
 fn tokens(value: &Value, found: &mut Vec<String>) {
     for (name, item) in value.as_object().into_iter().flatten() {
         match item {
-            Value::Object(_) => tokens(item, found),
+            Value::Object(_) => found.extend(token(name, &Value::String(item.to_string()))),
             other => found.extend(token(name, other)),
         }
     }

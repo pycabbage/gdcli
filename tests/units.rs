@@ -84,6 +84,25 @@ fn pair_values_are_bare_unless_they_could_be_misread() {
 }
 
 #[test]
+fn an_unexpected_nested_object_is_rendered_as_a_quoted_json_string_never_dropped() {
+    let value = json!({"things": [{"a": 1, "inner": {"b": "x y", "c": [1, 2]}, "z": true}], "box": {"deep": {"k": "v"}}});
+    let text = written(|out| record(out, &value, false).unwrap());
+    assert_eq!(
+        text,
+        "thing: a=1 inner=\"{\\\"b\\\":\\\"x y\\\",\\\"c\\\":[1,2]}\" z=true\n\
+         box: deep=\"{\\\"k\\\":\\\"v\\\"}\"\n"
+    );
+    common::assert_same_information(&text, &value.to_string());
+}
+
+#[test]
+fn top_level_values_are_trimmed_of_surrounding_whitespace() {
+    let text =
+        written(|out| record(out, &json!({"a": "  padded \t", "b": "\n x \n"}), false).unwrap());
+    assert_eq!(text, "a: padded\nb: x\n");
+}
+
+#[test]
 fn the_json_rendering_is_the_record_itself_on_one_line() {
     let json = written(|out| record(out, &sample(), true).unwrap());
     assert_eq!(json, format!("{}\n", sample()));

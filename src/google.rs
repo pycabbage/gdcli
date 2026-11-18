@@ -167,6 +167,7 @@ impl Google {
             .headers()
             .get(CONTENT_TYPE)
             .and_then(|kind| kind.to_str().ok())
+            .map(str::to_ascii_lowercase)
             .is_some_and(|kind| {
                 MARKDOWN_TYPES
                     .iter()

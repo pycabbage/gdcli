@@ -39,8 +39,8 @@ fn pairs(value: &Value, words: &mut Vec<String>) {
     let Value::Object(map) = value else { return };
     for (name, item) in map {
         match item {
-            Value::Object(_) => pairs(item, words),
             Value::String(text) => words.push(format!("{name}={}", quoted(text))),
+            Value::Object(_) => words.push(format!("{name}={}", quoted(&item.to_string()))),
             Value::Bool(_) | Value::Number(_) => words.push(format!("{name}={item}")),
             Value::Array(_) | Value::Null => {}
         }

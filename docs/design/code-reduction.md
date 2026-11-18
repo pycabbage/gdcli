@@ -55,3 +55,12 @@ Before: `src/` 1304, `tests/` 2928. After: `src/` 1323 (+19), `tests/` 3147 (+21
 | 29 | remove the old `leaves` helper (positional values) in favour of `pairs` | part of the +11 in `output.rs` (the helper was 9 lines, `pairs` and `quoted` are 20) | kept (readability is the owner's priority) |
 | 30 | drop the substring-based `every_leaf_of_the_record_appears_in_the_text` test, superseded by the line-by-line oracle | tests -14 | kept |
 
+## Wave 3c: reviewer nits
+
+Before: `src/` 1323, `tests/` 3147. After: `src/` 1324 (+1), `tests/` 3167 (+20).
+
+| # | Experiment | Delta measured | Result |
+|---|---|---|---|
+| 31 | case-insensitive content-type compare via `map(str::to_ascii_lowercase)` | src +1 | kept |
+| 32 | delete the nested-object arm of `pairs` (records have at most one level of nesting) and let a nested object fall into the quoted-JSON arm | src 0 (the arm changed from recursion to one quoted-JSON `push`; a pure deletion would silently drop an unexpected object, which the owner's equivalence rule forbids) | kept, now pinned by a test |
+

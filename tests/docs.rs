@@ -434,6 +434,9 @@ async fn both_markdown_content_types_are_accepted_and_everything_else_is_rejecte
         ("text/plain", false),
         ("application/json", false),
         ("text/x-mark", false),
+        ("Text/X-Markdown; Charset=UTF-8", true),
+        ("TEXT/MARKDOWN", true),
+        ("Text/HTML", false),
     ] {
         let harness = Harness::start().await;
         mount_tabs(&harness, tab_tree()).await;
