@@ -223,3 +223,10 @@ fn a_blank_tab_exits_with_a_usage_error_before_any_request() {
         );
     }
 }
+
+#[test]
+fn the_reported_version_is_the_package_version() {
+    let output = run(&mut gdcli(&["--version"]));
+    let expected = format!("gdcli {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}

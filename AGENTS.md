@@ -34,6 +34,7 @@ gdcli docs metadata <id> metadata of a Google Doc
 - Release workflow: on tag push, GoReleaser release for linux amd64 and linux arm64.
 - Every workflow must use the latest major version of each action (e.g. `actions/checkout@v7`) and be locked with `gh actions-lock`.
 - Never hand-edit tool-generated files (`.github/workflows/actions.lock`, `Cargo.lock`) without a strong reason; the machine-generated headers of `actions.lock` and `Cargo.lock` are the only comment-like text allowed.
+- Every GitHub Action used in `.github/workflows` (first-party or third-party) must have at least 1000 stars, checked with `gh api repos/<owner>/<repo> --jq .stargazers_count`; transitive actions inside an accepted wrapper are recorded in `docs/design/release.md`.
 - Commit only after the reviewer passes.
 - Git: author/credentials are preconfigured. NEVER run any `git config` command; NEVER read or write `.git/config`.
 - Tags and releases are managed by agents (tag = `v` + Cargo.toml version; procedure in `docs/design/release.md`). End-to-end tests with real credentials run only with the owner's installed credentials.

@@ -27,16 +27,14 @@
   1. `actions/checkout` with `fetch-depth: 0` (GoReleaser needs full history and tags).
   2. `dtolnay/rust-toolchain@stable`.
   3. `cargo test --locked`: the gate; tag pushes do not run `ci.yml`. Format and clippy checks are deliberately not repeated here: they gate every branch push in `ci.yml`, and a release tag points to a commit that already passed CI.
-  4. `mlugg/setup-zig@v2`: installs Zig, as in GoReleaser's own Rust/Zig workflow example (https://goreleaser.com/blog/rust-zig/: "we'll need this for both 'zig build' and 'cargo zigbuild'").
-  5. `astral-sh/setup-uv@v10.3.3`: installs uv and puts `~/.local/bin` (the `uv tool` bin directory) on `PATH`.
-  6. `uv tool install cargo-zigbuild`.
-  7. `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: release --clean`, `GITHUB_TOKEN` from `secrets.GITHUB_TOKEN`.
-  8. `actions/attest@v4` with `subject-checksums: ./dist/gdcli_checksums.txt`.
+  4. `pip install cargo-zigbuild`: the install documented in the cargo-zigbuild README ("pip install cargo-zigbuild ... will also install ziglang automatically"). No action, no uv, no separate Zig install, no `PATH` handling (see below).
+  5. `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: release --clean`, `GITHUB_TOKEN` from `secrets.GITHUB_TOKEN`.
+  6. `actions/attest-build-provenance@v4` with `subject-checksums: ./dist/gdcli_checksums.txt` (see Attestations).
 - Rust targets are not given to the toolchain action: GoReleaser's Rust docs state it "will run `rustup target add` for each target you declare".
-- Why uv plus setup-zig: `cargo-zigbuild` finds Zig as `python3 -m ziglang` (or `$CARGO_ZIGBUILD_PYTHON_PATH`), else as `zig` (or `$CARGO_ZIGBUILD_ZIG_PATH`). `uv tool install cargo-zigbuild` puts the PyPI `ziglang` dependency in the tool's private venv, which the system `python3` cannot see, so alone it fails (`Error: Failed to find zig`, reproduced locally). `setup-zig` provides `zig` on `PATH`, which `cargo-zigbuild` then uses. The redundant `ziglang` wheel is harmless.
-- `setup-zig@v2` is a mirror of https://codeberg.org/mlugg/setup-zig (upstream moved; the mirror is kept in sync and used by GoReleaser's docs). With no `version` input it installs the latest tagged Zig when there is no `build.zig.zon`.
+- Why plain `pip`: `cargo-zigbuild` finds Zig as `python3 -m ziglang` first (or `$CARGO_ZIGBUILD_PYTHON_PATH`), else as `zig` (or `$CARGO_ZIGBUILD_ZIG_PATH`) (`src/zig/locate.rs`). The GitHub `ubuntu-latest` image is built so that bare `pip` works (`images/ubuntu/scripts/build/install-python.sh` in actions/runner-images): it writes `/etc/pip.conf` with `break-system-packages = true` ("allow user to continue using pip") and puts `$HOME/.local/bin` on `PATH` ("make installed pip commands immediately available"). As a non-root user `pip install` falls back to the user site, which the system `python3` imports, so `python3 -m ziglang` finds the `ziglang` wheel that `cargo-zigbuild` depends on.
+- Why not uv or a Zig action: uv is not on the runner image (Python 3.12 on the 24.04 image, 3.14 on 26.04 (the v0.1.0 run used ubuntu-26.04), with pip, pipx, jq and Rust, and no uv and no Zig), `astral-sh/setup-uv` has fewer than 1000 stars (Action policy), and `uv tool install cargo-zigbuild` alone cannot work: the `ziglang` wheel lands in uv's private tool venv, which the system `python3` cannot see, and the wheel exposes only `python-zig`, never a `zig` executable, so `cargo-zigbuild` fails with `Failed to find zig` (reproduced locally). Making that work needs `CARGO_ZIGBUILD_ZIG_PATH=python-zig` plus an extra uv install route, which is more than the single documented pip line. `mlugg/setup-zig` has 241 stars.
 - GoReleaser version policy: `version: "~> v2"` is exactly what both the goreleaser-action README and the GoReleaser GitHub Actions docs show. The action resolves it to the newest v2.x, so GoReleaser updates arrive without edits. The config starts with `version: 2`, GoReleaser's own compatibility marker for the whole v2 line. No pin is used because no document recommends one. The config uses `release.preflight` (needs 2.18 or later) and `use_existing_draft` (2.5 or later); `goreleaser check` was run with v2.20.2, the newest v2 at the time of writing.
-- No tool versions are pinned (`cargo-zigbuild`, uv, Zig come at their latest). If a new tool release ever breaks the release job, pin that tool at that point (`uv tool install cargo-zigbuild==X`).
+- No tool versions are pinned (`cargo-zigbuild` and the `ziglang` wheel come at their latest). If a new tool release ever breaks the release job, pin that tool at that point (`pip install cargo-zigbuild==X`).
 
 ## Builder choice
 
@@ -56,8 +54,9 @@
 
 ## Attestations
 
-- Source: https://goreleaser.com/customization/publish/attestations/ ("If you're using GitHub Actions and want to attest your build artifacts, you can add the following to your release workflow") and the `actions/attest` README (v4.2.2, the current action; `actions/attest-build-provenance` is only its wrapper and the GoReleaser page uses `actions/attest@v4`).
-- Implemented as documented: workflow permissions `id-token: write` and `attestations: write` (plus the `contents: write` GoReleaser needs), and `actions/attest@v4` after GoReleaser with `subject-checksums`. The docs example path `./dist/checksums.txt` is adapted to our checksum file name `./dist/gdcli_checksums.txt` (`checksum.name_template` in `.goreleaser.yaml`). The checksum file is in the `sha256sum` format the action requires (digest, two spaces, file name).
+- Source: https://goreleaser.com/customization/publish/attestations/ ("If you're using GitHub Actions and want to attest your build artifacts, you can add the following to your release workflow") and the `actions/attest` README. The GoReleaser page uses `actions/attest@v4`; this repository uses `actions/attest-build-provenance@v4` instead, because of the 1000-star rule (see Action policy).
+- Implemented as documented: workflow permissions `id-token: write` and `attestations: write` (plus the `contents: write` GoReleaser needs), and `actions/attest-build-provenance@v4` after GoReleaser with `subject-checksums` (the input is passed through unchanged). The docs example path `./dist/checksums.txt` is adapted to our checksum file name `./dist/gdcli_checksums.txt` (`checksum.name_template` in `.goreleaser.yaml`). The checksum file is in the `sha256sum` format the action requires (digest, two spaces, file name).
+- Accepted exception: `actions/attest-build-provenance@v4` (1077 stars) is a composite wrapper (since v4 "simply a wrapper on top of `actions/attest`"; its README says new implementations should use `actions/attest` directly) that runs `actions/attest@508db95…` (v4.2.1; 187 stars). The workflow names only the wrapper, which meets the 1000-star rule; the transitive `actions/attest` is the same GitHub-owned code the GoReleaser docs use directly, and `gh actions-lock` records it as a transitive dependency of the wrapper. The other candidates fail the rule as well (`slsa-framework/slsa-github-generator` 611 stars, `sigstore/cosign-installer` 214 stars) and `gh attestation` can only verify, not create. The PM decided to keep the wrapper.
 - What is attested: a SLSA build provenance attestation for each file listed in `gdcli_checksums.txt`, i.e. `gdcli_linux_x86_64.tar.gz` and `gdcli_linux_aarch64.tar.gz` (the exact bytes GoReleaser uploaded), signed through Sigstore with the workflow's OIDC identity and recorded in the repository's attestation store.
 - Immutable releases: the attestation lives in GitHub's attestation store, not on the release. The step makes no Releases API call, so it never modifies the release or its assets, and it works whether or not immutability is enabled. It runs only after GoReleaser succeeded, that is after the release was published, so it always attests the final published bytes. This independent attestation is separate from the release attestation GitHub generates itself for an immutable release.
 - `use_existing_draft` and `replace_existing_artifacts` only act inside GoReleaser, before publishing; a re-run after a failed upload replaces assets and only then reaches the attest step, which attests the new bytes.
@@ -80,12 +79,31 @@ Works with and without the repository setting "Enable release immutability" (Set
 - Check the setting: `gh api repos/pycabbage/gdcli/immutable-releases` (200 enabled, 404 disabled; needs admin read access). After a release, `gh release verify <tag>` confirms it is immutable and `gh release verify-asset <tag> <file>` checks a downloaded asset.
 - Tested locally against a mock GitHub API server (scratch, not in the repo) with GoReleaser v2.20.2 and this config: the call order was `POST release (draft)`, uploads of both archives and the checksums file, `PATCH draft=false`; an injected upload failure left the draft unpublished; the re-run reused the draft, replaced the existing assets and published; a further re-run on the published immutable release stopped in preflight. Not tested against real GitHub immutable releases (no admin access to the repository from the agent environment, and no releases may be created by agents).
 
+## Action policy
+
+- Rule (owner): Every GitHub Action used in `.github/workflows` (first-party or third-party) must have at least 1000 stars, checked with `gh api repos/<owner>/<repo> --jq .stargazers_count`; transitive actions inside an accepted wrapper are recorded in docs/design/release.md. Check before adding an action and whenever one is updated. Prefer a documented tool invocation in a `run:` step over a low-star action.
+- Stars measured on 2026-11-18:
+
+| Action | Stars | Last release | Status |
+|---|---|---|---|
+| `actions/checkout` | 9025 | v7.0.1, 2026-07-20 | used |
+| `actions/cache` | 5604 | v6.1.0, 2026-06-26 | used |
+| `dtolnay/rust-toolchain` | 1605 | `v1` 2022-07-15 (branch `stable` active, pushed 2026-11-15) | used |
+| `goreleaser/goreleaser-action` | 1037 | v7.3.0, 2026-10-12 | used (37 stars above the limit) |
+| `actions/attest-build-provenance` | 1077 | v4.2.2, 2026-08-06 | used, wrapper (see Attestations) |
+| `actions/attest` | 187 | v4.2.2, 2026-08-04 | transitive only, runs inside the wrapper |
+| `astral-sh/setup-uv` | 913 | v10.3.3, 2026-10-28 | removed |
+| `mlugg/setup-zig` (GitHub mirror of a Codeberg repository) | 241 | v2.2.1, 2026-01-19 | removed |
+| `slsa-framework/slsa-github-generator` | 611 | v2.1.0, 2025-02-24 | evaluated for attestations, not used |
+| `sigstore/cosign-installer` | 214 | v4.1.3, 2026-11-04 | evaluated for attestations, not used |
+
+- Zig is provided by `pip install cargo-zigbuild` (see Release workflow), so no uv and no Zig action are needed.
+- Accepted exception for transitive actions: the wrapper `actions/attest-build-provenance` (1077 stars) is the action named in the workflow and meets the rule; it runs `actions/attest@508db95…` (v4.2.1, 187 stars) internally, which is recorded here and in the lockfile as its transitive dependency. See Attestations for the numbers and the alternatives that were evaluated.
+
 ## Action locking
 
-- Workflows reference the latest major of each action: `actions/checkout@v7`, `actions/cache@v6`, `goreleaser/goreleaser-action@v7`, `actions/attest@v4`, `mlugg/setup-zig@v2`, `astral-sh/setup-uv@v10.3.3`, `dtolnay/rust-toolchain@stable`. Verify the latest major with `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name` and `gh api --paginate "repos/<owner>/<repo>/tags?per_page=100" --jq '.[].name' | grep -E '^v[0-9]+$'`.
-- Two actions have no floating major tag, so they cannot be written as `@vN`:
-  - `astral-sh/setup-uv`: since v8 only immutable full tags exist (`v10.3.3`; there is no `v10`, `v9` or `v8` tag, the last floating tag is `v7`). Its README shows the SHA of the full tag. The ref `@v10.3.3` states the latest major (10); update it to the newest full tag by editing the ref and re-locking.
-  - `dtolnay/rust-toolchain`: the revision selects the toolchain (README: "The selection of Rust toolchain is made based on the particular @rev of this Action"). `@stable` is a branch that the author advances with each Rust release, and the only major tag, `v1`, selects nothing. The lockfile records the branch as `ref: 'stable'` with the commit SHA of the branch head at lock time.
+- Workflows reference the latest major of each action: `actions/checkout@v7`, `actions/cache@v6`, `goreleaser/goreleaser-action@v7`, `actions/attest-build-provenance@v4`, `dtolnay/rust-toolchain@stable`. Verify the latest major with `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name` and `gh api --paginate "repos/<owner>/<repo>/tags?per_page=100" --jq '.[].name' | grep -E '^v[0-9]+$'`.
+- `dtolnay/rust-toolchain` cannot be written as `@vN`: the revision selects the toolchain (README: "The selection of Rust toolchain is made based on the particular @rev of this Action"). `@stable` is a branch that the author advances with each Rust release, and the only major tag, `v1`, selects nothing. The lockfile records the branch as `ref: 'stable'` with the commit SHA of the branch head at lock time.
 - A moved branch ref makes the lockfile stale, not wrong: it keeps pointing at the locked commit until `--relock` advances it.
 - `gh actions-lock` (extension `github/gh-actions-lock`, install with `gh extension install github/gh-actions-lock`) resolves each ref to an immutable commit SHA and records it in `.github/workflows/actions.lock`. Workflows keep the readable `@vN` refs; the lockfile is what pins them.
 - `.github/workflows/actions.lock` and `Cargo.lock` are tool output and are never hand-edited. Their machine-generated `#` headers (`This file is machine-generated by gh actions-lock...`, `This file is automatically @generated by Cargo.`) are part of that output and are the only comment-like text allowed in the repo.
@@ -158,6 +176,6 @@ Only a release that was already published burns its version. Before the publish 
 
 - GitHub Actions enabled; workflow permissions may stay at the read-only default, since `release.yml` requests `contents: write`, `id-token: write` and `attestations: write` itself.
 - No secrets or variables to configure.
-- Not verified on GitHub (only locally): the workflows themselves, including `setup-zig`, `setup-uv`, `uv tool install cargo-zigbuild` on a runner and the attest step. The first tag run is the first real test.
+- Not verified on GitHub (only locally): the workflows themselves, including `pip install cargo-zigbuild` on a runner (the runner image setup is read from its build scripts, not run) and the attest step. The first tag run is the first real test.
 - The lockfile and workflows must be committed together.
 - Release procedure: see Release management. The release workflow creates a draft release, attaches the assets, publishes it, then attests the archives.

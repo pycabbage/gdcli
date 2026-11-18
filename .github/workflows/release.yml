@@ -19,15 +19,13 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
-      - uses: mlugg/setup-zig@v2
-      - uses: astral-sh/setup-uv@v10.3.3
-      - run: uv tool install cargo-zigbuild
+      - run: pip install cargo-zigbuild
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/attest@v4
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-checksums: ./dist/gdcli_checksums.txt
