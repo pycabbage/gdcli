@@ -6,10 +6,20 @@ workflows:
     '.github/workflows/ci.yml':
         - 'actions/cache@v6'
         - 'actions/checkout@v7'
+        - 'dtolnay/rust-toolchain@stable'
     '.github/workflows/release.yml':
+        - 'actions/attest@v4'
         - 'actions/checkout@v7'
+        - 'astral-sh/setup-uv@v10.3.3'
+        - 'dtolnay/rust-toolchain@stable'
         - 'goreleaser/goreleaser-action@v7'
+        - 'mlugg/setup-zig@v2'
 dependencies:
+    'actions/attest@v4':
+        ref: 'v4'
+        commit: 'sha1-1e69f48acb82d1966a394da916b4c1698aa569d6'
+        owner_id: 44036562
+        repo_id: 760701061
     'actions/cache@v6':
         ref: 'v6'
         commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
@@ -20,8 +30,23 @@ dependencies:
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
+    'astral-sh/setup-uv@v10.3.3':
+        ref: 'v10.3.3'
+        commit: 'sha1-68559e99cc807c1eb7e9238fd43a15bba460eec2'
+        owner_id: 115962839
+        repo_id: 846733598
+    'dtolnay/rust-toolchain@stable':
+        ref: 'stable'
+        commit: 'sha1-39008827e6b4319a349e9a42dfc90579dd25f1ca'
+        owner_id: 1940490
+        repo_id: 260749683
     'goreleaser/goreleaser-action@v7':
         ref: 'v7'
         commit: 'sha1-a4f02ab5355a589de60d917a659ce617ed19b3de'
         owner_id: 24697112
         repo_id: 209873006
+    'mlugg/setup-zig@v2':
+        ref: 'v2'
+        commit: 'sha1-d1434d08867e3ee9daa34448df10607b98908d29'
+        owner_id: 7289241
+        repo_id: 812112570

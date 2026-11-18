@@ -1,67 +1,20 @@
-use chrono::NaiveDate;
-use gdcli::Paths;
-use gdcli::calendar::events::{has_ended, instant, is_cancelled, render_time};
 use gdcli::docs::document_id;
-use gdcli::meet::{Target, is_meeting_code, meeting_code, parse_target, record_id};
-use gdcli::output::{field, field_opt, row};
-use google_calendar3::api::{Event, EventDateTime};
+use gdcli::events::{meeting_code, render_time, stamp, stamp_millis};
+use gdcli::output::{field, flatten, row};
+use gdcli::{Command, Paths, deadline_for};
 use serde_json::json;
+use std::io::{Error, ErrorKind};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
-fn event(value: serde_json::Value) -> Event {
-    serde_json::from_value(value).unwrap()
+fn at(value: &str) -> OffsetDateTime {
+    OffsetDateTime::parse(value, &Rfc3339).unwrap()
 }
 
-fn at(value: &str) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .unwrap()
-        .to_utc()
-}
-
-#[test]
-fn meeting_codes_are_three_four_three_lowercase_letters() {
-    for valid in ["abc-defg-hij", "xyz-wxyz-abc"] {
-        assert!(is_meeting_code(valid), "{valid}");
-    }
-    for invalid in [
-        "",
-        "abc-defg-hi",
-        "abc-defg-hijk",
-        "ab-defg-hij",
-        "ABC-defg-hij",
-        "abc-def1-hij",
-        "abc-defg-hij-klm",
-        "abcdefghij",
-        "abc_defg_hij",
-        "wGVfAbCdE12",
-    ] {
-        assert!(!is_meeting_code(invalid), "{invalid}");
-    }
-}
-
-#[test]
-fn meet_ids_resolve_to_codes_or_record_names() {
-    assert_eq!(
-        parse_target("abc-defg-hij"),
-        Target::Code("abc-defg-hij".to_owned())
-    );
-    assert_eq!(
-        parse_target("https://meet.google.com/abc-defg-hij"),
-        Target::Code("abc-defg-hij".to_owned())
-    );
-    assert_eq!(
-        parse_target("ABC-Defg-HIJ"),
-        Target::Code("abc-defg-hij".to_owned())
-    );
-    assert_eq!(
-        parse_target("REC1"),
-        Target::Record("conferenceRecords/REC1".to_owned())
-    );
-    assert_eq!(
-        parse_target("conferenceRecords/REC1"),
-        Target::Record("conferenceRecords/REC1".to_owned())
-    );
-    assert_eq!(record_id("conferenceRecords/REC1"), "REC1");
-    assert_eq!(record_id("REC1"), "REC1");
+fn written(write: impl FnOnce(&mut Vec<u8>)) -> String {
+    let mut out = Vec::new();
+    write(&mut out);
+    String::from_utf8(out).unwrap()
 }
 
 #[test]
@@ -82,75 +35,54 @@ fn document_ids_are_extracted_from_urls() {
 
 #[test]
 fn rows_are_tab_separated_with_control_characters_flattened() {
-    let mut out = Vec::new();
-    row(&mut out, &["a", "b\tc", "d\ne\r", ""]).unwrap();
-    assert_eq!(String::from_utf8(out).unwrap(), "a\tb c\td e \t\n");
+    let line = written(|out| row(out, &["a", "b\tc", "d\ne\r", ""]).unwrap());
+    assert_eq!(line, "a\tb c\td e \t\n");
 }
 
 #[test]
 fn fields_skip_empty_values_and_indent_continuations() {
-    let mut out = Vec::new();
-    field(&mut out, "empty", "  \n ").unwrap();
-    field_opt(&mut out, "none", None).unwrap();
-    field_opt(&mut out, "some", Some("x")).unwrap();
-    field(&mut out, "multi", "one\ntwo\n\nthree\n").unwrap();
+    let lines = written(|out| {
+        field(out, "empty", "  \n ").unwrap();
+        field(out, "multi", "one\ntwo\n\nthree\n").unwrap();
+    });
+    assert_eq!(lines, "multi: one\n  two\n  \n  three\n");
+}
+
+#[test]
+fn flatten_prints_scalars_with_dotted_keys_and_indexed_arrays() {
+    let value = json!({"b": {"c": 1, "d": [true, null, "x"]}, "a": "y", "e": null, "f": {}});
+    let lines = written(|out| flatten(out, "", &value).unwrap());
+    assert_eq!(lines, "a: y\nb.c: 1\nb.d.0: true\nb.d.2: x\n");
+}
+
+#[test]
+fn event_times_render_as_utc_seconds_or_dates() {
+    let timed = json!({"start": {"dateTime": "2026-11-18T09:30:15+09:00"}});
+    let all_day = json!({"start": {"date": "2026-11-20"}});
+    assert_eq!(render_time(&timed, "start"), "2026-11-18T00:30:15Z");
+    assert_eq!(render_time(&all_day, "start"), "2026-11-20");
+    assert_eq!(render_time(&json!({"start": {}}), "start"), "");
+    assert_eq!(render_time(&json!({}), "end"), "");
     assert_eq!(
-        String::from_utf8(out).unwrap(),
-        "some: x\nmulti: one\n  two\n  \n  three\n"
+        stamp(at("2026-11-18T09:30:15.75+09:00")),
+        "2026-11-18T00:30:15Z"
     );
-}
-
-#[test]
-fn event_times_render_as_rfc3339_or_dates() {
-    let timed = EventDateTime {
-        date_time: Some(at("2026-11-18T09:30:15+09:00")),
-        ..Default::default()
-    };
-    let all_day = EventDateTime {
-        date: NaiveDate::from_ymd_opt(2026, 11, 20),
-        ..Default::default()
-    };
-    assert_eq!(render_time(Some(&timed)), "2026-11-18T00:30:15Z");
-    assert_eq!(render_time(Some(&all_day)), "2026-11-20");
-    assert_eq!(render_time(Some(&EventDateTime::default())), "");
-    assert_eq!(render_time(None), "");
-    assert_eq!(instant(&all_day), Some(at("2026-11-20T00:00:00Z")));
-    assert_eq!(instant(&EventDateTime::default()), None);
-}
-
-#[test]
-fn ended_events_have_an_end_at_or_before_now() {
-    let now = at("2026-11-18T00:00:00Z");
-    let ended = event(json!({"end": {"dateTime": "2026-11-18T00:00:00Z"}}));
-    let ongoing = event(json!({"end": {"dateTime": "2026-11-18T00:00:01Z"}}));
-    let all_day = event(json!({"end": {"date": "2026-11-18"}}));
-    assert!(has_ended(&ended, now));
-    assert!(!has_ended(&ongoing, now));
-    assert!(has_ended(&all_day, now));
-    assert!(!has_ended(&event(json!({})), now));
-}
-
-#[test]
-fn cancelled_status_is_detected() {
-    assert!(is_cancelled(&event(json!({"status": "cancelled"}))));
-    assert!(!is_cancelled(&event(json!({"status": "confirmed"}))));
-    assert!(!is_cancelled(&event(json!({}))));
+    assert_eq!(
+        stamp_millis(at("2026-11-18T09:30:15+09:00")),
+        "2026-11-18T00:30:15.000Z"
+    );
 }
 
 #[test]
 fn only_hangouts_meet_conferences_yield_a_code() {
-    let meet = event(
-        json!({"conferenceData": {"conferenceId": "abc-defg-hij", "conferenceSolution": {"key": {"type": "hangoutsMeet"}}}}),
-    );
-    let other = event(
-        json!({"conferenceData": {"conferenceId": "123", "conferenceSolution": {"key": {"type": "addOn"}}}}),
-    );
+    let meet = json!({"conferenceData": {"conferenceId": "abc-defg-hij", "conferenceSolution": {"key": {"type": "hangoutsMeet"}}}});
+    let other = json!({"conferenceData": {"conferenceId": "123", "conferenceSolution": {"key": {"type": "addOn"}}}});
     let no_id =
-        event(json!({"conferenceData": {"conferenceSolution": {"key": {"type": "hangoutsMeet"}}}}));
+        json!({"conferenceData": {"conferenceSolution": {"key": {"type": "hangoutsMeet"}}}});
     assert_eq!(meeting_code(&meet), Some("abc-defg-hij"));
     assert_eq!(meeting_code(&other), None);
     assert_eq!(meeting_code(&no_id), None);
-    assert_eq!(meeting_code(&event(json!({}))), None);
+    assert_eq!(meeting_code(&json!({})), None);
 }
 
 #[test]
@@ -161,6 +93,78 @@ fn paths_join_the_fixed_file_names() {
         std::path::Path::new("/c/gdcli/client_secret.json")
     );
     assert_eq!(paths.token(), std::path::Path::new("/d/gdcli/token.json"));
-    assert_eq!(paths.config_dir(), std::path::Path::new("/c/gdcli"));
-    assert_eq!(paths.data_dir(), std::path::Path::new("/d/gdcli"));
+    assert_eq!(paths.config, std::path::Path::new("/c/gdcli"));
+    assert_eq!(paths.data, std::path::Path::new("/d/gdcli"));
+}
+
+#[derive(Debug)]
+struct Wrapped(Error);
+
+impl std::fmt::Display for Wrapped {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "request failed")
+    }
+}
+
+impl std::error::Error for Wrapped {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+#[test]
+fn only_a_top_level_broken_pipe_counts_as_a_closed_pipe() {
+    let broken = anyhow::Error::from(Error::from(ErrorKind::BrokenPipe));
+    assert!(gdcli::is_broken_pipe(&broken));
+    assert!(gdcli::is_broken_pipe(
+        &broken.context("cannot write output")
+    ));
+    let network = anyhow::Error::new(Wrapped(Error::from(ErrorKind::BrokenPipe)));
+    assert!(!gdcli::is_broken_pipe(&network));
+    assert!(!gdcli::is_broken_pipe(&network.context("request failed")));
+    assert!(!gdcli::is_broken_pipe(&anyhow::Error::from(Error::from(
+        ErrorKind::NotFound
+    ))));
+    assert!(!gdcli::is_broken_pipe(&anyhow::anyhow!("broken pipe")));
+}
+
+#[test]
+fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
+    use clap::Parser;
+    let parse = |args: &[&str]| {
+        gdcli::Cli::try_parse_from(std::iter::once("gdcli").chain(args.iter().copied()))
+            .unwrap()
+            .command
+    };
+    for args in [&["setup"][..], &["login"]] {
+        assert_eq!(deadline_for(&parse(args)), None, "{args:?}");
+    }
+    for args in [
+        &["calendar", "list"][..],
+        &["calendar", "get", "e"],
+        &["meet", "list"],
+        &["meet", "get", "e"],
+        &["docs", "get", "d"],
+    ] {
+        assert_eq!(
+            deadline_for(&parse(args)),
+            Some(gdcli::google::DEADLINE),
+            "{args:?}"
+        );
+    }
+    assert!(matches!(parse(&["login"]), Command::Login));
+}
+
+#[test]
+fn the_product_description_is_the_first_line_of_the_readme() {
+    let readme =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+    assert_eq!(readme.lines().next(), Some(env!("CARGO_PKG_DESCRIPTION")));
+}
+
+#[test]
+fn help_shows_the_cargo_description() {
+    use clap::CommandFactory;
+    let about = gdcli::Cli::command().get_about().unwrap().to_string();
+    assert_eq!(about, env!("CARGO_PKG_DESCRIPTION"));
 }

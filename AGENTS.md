@@ -1,6 +1,6 @@
 # gdcli
 
-CLI for Google Workspace products, made for agents. Rust. This file exists because the owner's INSTRUCTIONS.md is not committed; it transcribes every rule from it.
+Agent-oriented CLI for Google Workspace: Meet, Calendar and Docs. Rust. This file exists because the owner's INSTRUCTIONS.md is not committed; it transcribes every rule from it.
 
 ## Commands
 

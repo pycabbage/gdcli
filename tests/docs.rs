@@ -40,5 +40,5 @@ async fn reports_export_failures() {
     let mut out = Vec::new();
     let error = docs::get(&harness.api, "BIG", &mut out).await.unwrap_err();
     assert!(gdcli::message(&error).contains("too large to be exported"));
-    assert!(out.is_empty());
+    assert_eq!(out, b"");
 }

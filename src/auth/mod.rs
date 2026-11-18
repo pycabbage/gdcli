@@ -1,8 +1,7 @@
-mod secret;
 mod token;
 
-pub use secret::{install_client_secret, validate_client_secret};
-pub use token::{Token, authenticator, login};
+pub use setup::{install_client_secret, validate_client_secret};
+pub use token::{authenticator, login};
 
 pub const SCOPES: [&str; 3] = [
     "https://www.googleapis.com/auth/calendar.events.readonly",

@@ -115,13 +115,13 @@ async fn setup_prints_instructions_destination_and_rejects_a_bad_path() {
 async fn setup_with_empty_answer_requires_a_valid_placed_secret() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::new(dir.path().join("config"), dir.path().join("data"));
-    let error = setup(&paths, Cursor::new("\n"), &mut Vec::new())
+    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new()))
         .await
         .unwrap_err();
     assert!(gdcli::message(&error).contains("client_secret.json"));
-    std::fs::create_dir_all(paths.config_dir()).unwrap();
+    std::fs::create_dir_all(&paths.config).unwrap();
     std::fs::write(paths.client_secret(), WEB).unwrap();
-    let error = setup(&paths, Cursor::new("\n"), &mut Vec::new())
+    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new()))
         .await
         .unwrap_err();
     assert!(gdcli::message(&error).contains("Desktop app"));

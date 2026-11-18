@@ -38,27 +38,32 @@ async fn prints_only_non_empty_fields_with_indented_multiline_values() {
         .unwrap();
     assert_eq!(
         text(out),
-        "id: abc123\n\
-         status: confirmed\n\
-         summary: Planning\n\
-         start: 2026-11-20T01:00:00Z\n\
-         end: 2026-11-20T02:00:00Z\n\
-         time_zone: Asia/Tokyo\n\
+        "attendees.0.email: a@example.com\n\
+         attendees.0.responseStatus: accepted\n\
+         attendees.1.displayName: Bee\n\
+         attendees.1.email: b@example.com\n\
+         attendees.1.responseStatus: needsAction\n\
+         conferenceData.conferenceId: abc-defg-hij\n\
+         conferenceData.entryPoints.0.entryPointType: video\n\
+         conferenceData.entryPoints.0.uri: https://meet.google.com/abc-defg-hij\n\
+         created: 2026-11-01T00:00:00.000Z\n\
+         description: First line\n  Second line\n\
+         end.dateTime: 2026-11-20T11:00:00+09:00\n\
+         hangoutLink: https://meet.google.com/abc-defg-hij\n\
+         id: abc123\n\
          location: Room 1\n\
-         organizer: Boss <boss@example.com>\n\
-         attendee: a@example.com [accepted]\n\
-         attendee: Bee <b@example.com> [needsAction]\n\
-         meet_link: https://meet.google.com/abc-defg-hij\n\
-         conference_id: abc-defg-hij\n\
-         entry_point_video: https://meet.google.com/abc-defg-hij\n\
-         created: 2026-11-01T00:00:00Z\n\
-         description: First line\n  Second line\n"
+         organizer.displayName: Boss\n\
+         organizer.email: boss@example.com\n\
+         start.dateTime: 2026-11-20T10:00:00+09:00\n\
+         start.timeZone: Asia/Tokyo\n\
+         status: confirmed\n\
+         summary: Planning\n"
     );
     let requests = harness.requests(&format!("{EVENTS_PATH}/abc123")).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(
         requests[0]["fields"],
-        "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,conferenceSolution(key(type)),entryPoints(entryPointType,uri))"
+        "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,entryPoints(entryPointType,uri))"
     );
 }
 
@@ -77,5 +82,5 @@ async fn reports_not_found() {
         .await
         .unwrap_err();
     assert!(gdcli::message(&error).contains("Not Found"));
-    assert!(out.is_empty());
+    assert_eq!(out, b"");
 }

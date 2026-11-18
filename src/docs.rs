@@ -1,11 +1,7 @@
-use crate::api::Api;
-use crate::cli::DocsCommand;
+use crate::google::Google;
 use anyhow::Result;
-use google_apis_common::Connector;
 use http_body_util::BodyExt;
 use std::io::Write;
-
-const MARKDOWN: &str = "text/markdown";
 
 pub fn document_id(input: &str) -> &str {
     match input.split_once("/d/") {
@@ -14,12 +10,13 @@ pub fn document_id(input: &str) -> &str {
     }
 }
 
-pub async fn get<C: Connector>(api: &Api<C>, id: &str, out: &mut impl Write) -> Result<()> {
-    let response = api
-        .drive
-        .files()
-        .export(document_id(id), MARKDOWN)
-        .doit()
+pub async fn get(google: &Google, id: &str, out: &mut impl Write) -> Result<()> {
+    let response = google
+        .send(
+            &google.drive,
+            &["files", document_id(id), "export"],
+            &[("mimeType", "text/markdown")],
+        )
         .await?;
     let mut body = response.into_body();
     while let Some(frame) = body.frame().await {
@@ -28,14 +25,4 @@ pub async fn get<C: Connector>(api: &Api<C>, id: &str, out: &mut impl Write) -> 
         }
     }
     Ok(())
-}
-
-pub async fn run<C: Connector>(
-    api: &Api<C>,
-    command: DocsCommand,
-    out: &mut impl Write,
-) -> Result<()> {
-    match command {
-        DocsCommand::Get { id } => get(api, &id, out).await,
-    }
 }

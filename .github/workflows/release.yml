@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -15,12 +17,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
-      - run: python3 -m venv "$RUNNER_TEMP/zigbuild" && "$RUNNER_TEMP/zigbuild/bin/pip" install cargo-zigbuild==0.24.1 && echo "$RUNNER_TEMP/zigbuild/bin" >> "$GITHUB_PATH"
+      - uses: mlugg/setup-zig@v2
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv tool install cargo-zigbuild
       - uses: goreleaser/goreleaser-action@v7
         with:
-          version: v2.20.2
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: ./dist/gdcli_checksums.txt

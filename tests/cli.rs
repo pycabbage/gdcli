@@ -23,8 +23,8 @@ fn parses_every_specified_command() {
         parse(&["calendar", "list"]),
         Ok(Command::Calendar(CalendarCommand::List))
     ));
-    match parse(&["meet", "get", "abc-defg-hij"]) {
-        Ok(Command::Meet(MeetCommand::Get { id })) => assert_eq!(id, "abc-defg-hij"),
+    match parse(&["meet", "get", "evt1"]) {
+        Ok(Command::Meet(MeetCommand::Get { id })) => assert_eq!(id, "evt1"),
         other => panic!("{other:?}"),
     }
     match parse(&["calendar", "get", "evt1"]) {
@@ -33,7 +33,7 @@ fn parses_every_specified_command() {
     }
     match parse(&["docs", "get", "https://docs.google.com/document/d/X/edit"]) {
         Ok(Command::Docs(DocsCommand::Get { id })) => {
-            assert_eq!(id, "https://docs.google.com/document/d/X/edit")
+            assert_eq!(id, "https://docs.google.com/document/d/X/edit");
         }
         other => panic!("{other:?}"),
     }
@@ -57,6 +57,34 @@ fn rejects_unspecified_flags_and_missing_arguments() {
     ] {
         assert!(parse(args).is_err(), "{args:?}");
     }
+}
+
+#[test]
+fn rejects_empty_ids_with_a_usage_error() {
+    for args in [
+        &["calendar", "get", ""][..],
+        &["meet", "get", ""],
+        &["docs", "get", ""],
+    ] {
+        let error = parse(args).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{args:?}");
+    }
+}
+
+#[test]
+fn rejects_event_ids_that_could_change_the_request_path() {
+    for id in [".", "..", "%2e", "%2e%2e", "a/b", "a?b", "a#b", "a%2Fb"] {
+        for args in [["calendar", "get", id], ["meet", "get", id]] {
+            let error = parse(&args).unwrap_err();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{args:?}"
+            );
+            assert!(error.to_string().contains("invalid event id"), "{error}");
+        }
+    }
+    assert!(parse(&["calendar", "get", "abc123_20261120T010000Z"]).is_ok());
 }
 
 #[test]

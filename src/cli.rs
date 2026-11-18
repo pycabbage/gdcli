@@ -1,7 +1,15 @@
+use clap::builder::NonEmptyStringValueParser;
 use clap::{Parser, Subcommand};
 
+fn event_id(value: &str) -> Result<String, String> {
+    if value.is_empty() || matches!(value, "." | "..") || value.contains(['/', '?', '#', '%']) {
+        return Err("invalid event id".to_owned());
+    }
+    Ok(value.to_owned())
+}
+
 #[derive(Debug, Parser)]
-#[command(version, about = "Read-only Google Workspace CLI for AI agents")]
+#[command(version, about)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -25,9 +33,9 @@ pub enum Command {
 pub enum MeetCommand {
     #[command(about = "Latest 10 meetings: 5 past, 5 upcoming")]
     List,
-    #[command(about = "Show a meeting by meeting code or conference record id")]
+    #[command(about = "Show a meeting with its space settings, conferences and artifacts")]
     Get {
-        #[arg(help = "Meeting code (abc-defg-hij) or conference record id")]
+        #[arg(help = "Event id from `meet list` or `calendar list`", value_parser = event_id)]
         id: String,
     },
 }
@@ -38,7 +46,7 @@ pub enum CalendarCommand {
     List,
     #[command(about = "Show one event")]
     Get {
-        #[arg(help = "Event id of the primary calendar")]
+        #[arg(help = "Event id from `calendar list` or `meet list`", value_parser = event_id)]
         id: String,
     },
 }
@@ -47,7 +55,7 @@ pub enum CalendarCommand {
 pub enum DocsCommand {
     #[command(about = "Print a Google Doc as Markdown")]
     Get {
-        #[arg(help = "Document id or docs.google.com URL")]
+        #[arg(help = "Document id or docs.google.com URL", value_parser = NonEmptyStringValueParser::new())]
         id: String,
     },
 }

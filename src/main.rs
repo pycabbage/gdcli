@@ -6,6 +6,7 @@ use std::process::ExitCode;
 async fn main() -> ExitCode {
     match gdcli::run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error) if gdcli::is_broken_pipe(&error) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {}", gdcli::message(&error));
             ExitCode::FAILURE
