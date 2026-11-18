@@ -1,5 +1,7 @@
 # Lints and formatting
 
+Toolchain: CI installs the current stable Rust (`dtolnay/rust-toolchain@stable`), and clippy and rustc add or tighten lints between releases (a new `clippy::map_unwrap_or` finding broke CI on 1.100 while 1.99 was clean). Keep the local toolchain at the latest stable before running the gates: `rustup update stable && rustup component add clippy rustfmt`. No `rust-toolchain.toml` pins a version on purpose, so local runs and CI use the same stable release.
+
 - Formatting: `cargo fmt` with its defaults. There is no `rustfmt.toml` because no setting would carry information; `cargo fmt --check` gates CI.
 - Lints live in `Cargo.toml` (`[lints]`), so the same configuration applies locally and in CI (`cargo clippy --all-targets --locked -- -D warnings`):
   - `rust::unsafe_code = "forbid"`; the crate contains no `unsafe`.

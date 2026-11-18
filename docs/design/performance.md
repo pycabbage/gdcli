@@ -20,11 +20,11 @@ Priorities: startup time, resident memory, bytes transferred, number of round tr
 - Directories are created only when something is written (`login` creates the data directory; no other command creates any).
 - `calendar list` and `meet list` send the `eventTypes` filter (default, focusTime, outOfOffice, fromGmail), so working-location and birthday entries are neither transferred nor parsed.
 
-## Measurements (x86_64 Linux, release profile, rustc 1.99)
+## Measurements (x86_64 Linux, release profile, rustc 1.100)
 
 | Measurement | Before the REST layer (generated Google crates, chrono) | After the REST layer | Now (JSON, tabs, metadata, counts) |
 |---|---|---|---|
-| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,662,192 bytes |
+| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,661,096 bytes |
 | Unique packages in the normal dependency tree, including gdcli (`cargo tree -e normal --prefix none --no-dedupe \| sed 's/ (.*//' \| sort -u \| wc -l`) | 123 | 108 | 109 (`foldhash` through `preserve_order`) |
 | Peak RSS of `gdcli --help` (`/usr/bin/time -f %M`, 3 runs) | 3576, 3576, 3632 KB | 3468, 3388, 3376 KB | 3536, 3700, 3572 KB |
 | Peak RSS of a command with a real HTTPS round trip to Google and an invalid token (so the answer is a small 401) | 6.0 to 6.3 MB | 5.6 to 5.8 MB | `calendar list` 5728, `meet list` 5888, `docs get --tab` 5600, `docs metadata` 5888 KB |

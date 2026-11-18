@@ -62,7 +62,7 @@ fn instant(event: &Value, which: &str) -> Option<OffsetDateTime> {
 pub fn render_time(event: &Value, which: &str) -> String {
     match event.get(which).and_then(|moment| moment.get("date")) {
         Some(Value::String(date)) => date.clone(),
-        _ => timed(event, which).map(stamp).unwrap_or_default(),
+        _ => timed(event, which).map_or_default(stamp),
     }
 }
 
