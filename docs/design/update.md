@@ -58,9 +58,15 @@ Production values are written only in `run`: the client from `google::https_buil
 
 Rejected test seams: an environment variable in the release binary (anything that can set the environment of one `gdcli update` decides where the executable comes from), `#[cfg(debug_assertions)]` (ties security code to a profile switch; `cargo test --release` would silently contact GitHub) and a Cargo feature enabled for tests through a self dev-dependency (it works, but it adds a lock self edge and two gates for a seam that plain injection makes unnecessary).
 
+## Verified against the released v0.2.0
+
+- The real self-update script (verification step 8 of `release.md`) printed `E2E-OK` against the genuine `v0.2.0` release: a scratch 0.0.1 build was updated to v0.2.0 (`status: updated`, `current: 0.0.1`, `latest: 0.2.0`); the API digest equals the sha256 of the downloaded asset and the installed file equals the `gdcli` entry of the archive; the mode (775) and owner were preserved and only `gdcli` was left in the directory.
+- The updated binary is the genuine release binary, and its own second `update` printed `status: up_to_date`. The equal-version case, a build newer than the release (9.0.0), a symlinked install (the link is kept), mode 700 (kept) and a read-only directory (`error: cannot write to <dir>: Permission denied (os error 13)`, binary unchanged) behave as specified.
+- The genuine `v0.2.0` x86_64 binary run in a clean home printed `status: up_to_date`, `current: 0.2.0`, `latest: 0.2.0` and left itself unchanged. Run on 2026-11-19.
+
 ## What stays unverified
 
-Execution of the aarch64 binary and of an aarch64 update (no aarch64 host; the build is checked with `cargo zigbuild --target aarch64-unknown-linux-gnu`), a root-owned or package-managed install path (covered by the read-only directory run only), and the first real prerelease tag.
+Execution of the aarch64 binary and of an aarch64 update (no aarch64 host; the build is checked with `cargo zigbuild --target aarch64-unknown-linux-gnu`, and the released aarch64 binary was only inspected), a root-owned or package-managed install path (covered by the read-only directory run only), and the first real prerelease tag (`v0.2.0` is a normal release; the prerelease handling is proven against the GoReleaser source and a mock API only).
 
 ## Alternatives rejected
 
