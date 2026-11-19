@@ -7,18 +7,23 @@ description = "Agent-oriented CLI for Google Workspace: Meet, Calendar and Docs.
 [dependencies]
 anyhow = "1"
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 http = "1"
 http-body-util = "0.1"
 hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "webpki-roots", "http1", "http2"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "http2", "tokio"] }
+ring = "0.17"
+self-replace = "1"
+semver = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
+tar = { version = "0.4.45", default-features = false }
+tempfile = "3"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time"] }
 url = "2"
 yup-oauth2 = { version = "12", default-features = false, features = ["hyper-rustls", "ring"] }
 
 [dev-dependencies]
-tempfile = "3"
 wiremock = "0.6"
 
 [lints.rust]

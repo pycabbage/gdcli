@@ -43,14 +43,16 @@
 - Targets: `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` only. glibc baseline is zig's default; append e.g. `.2.31` to a target to pin it.
 - `--locked` makes the release fail if `Cargo.lock` is out of date, so `Cargo.lock` must be committed.
 
-## Release assets (contract used by README)
+## Release assets (contract used by README and by `gdcli update`)
 
 - `gdcli_linux_x86_64.tar.gz` and `gdcli_linux_aarch64.tar.gz`: no version in the name, so `https://github.com/pycabbage/gdcli/releases/latest/download/gdcli_linux_$(uname -m).tar.gz` always works.
 - Each archive is tar.gz with the `gdcli` binary at the archive root (no wrapping directory) and nothing else (`files: [none*]` suppresses the default README/LICENSE inclusion; GoReleaser logs "no files matched glob=none*", which is expected). Entries are owned by root:root.
 - `gdcli_checksums.txt`: SHA-256 checksums of both archives (version-free name too).
 - The name template maps GoReleaser's `amd64`/`arm64` to `x86_64`/`aarch64` to match `uname -m`.
 - GoReleaser also creates the GitHub Release with an auto-generated changelog.
-- `releases/latest/download/<asset>` resolves once the release is published and not a draft or pre-release. GoReleaser leaves `make_latest` and `prerelease` at their defaults, so every published `v*` release becomes the latest one, including tags such as `v1.0.0-rc1`.
+- `releases/latest/download/<asset>` resolves once the release is published and not a draft or pre-release. `.goreleaser.yaml` sets `prerelease: auto` under `release:`, so a tag with a semver prerelease suffix such as `v1.0.0-rc1` is published as a GitHub prerelease and is neither `releases/latest` nor the target of `releases/latest/download`; every other published `v*` release becomes the latest one (`make_latest` stays at its default). Evidence (GoReleaser v2.20.2): `internal/pipe/release/release.go` lines 75-84 (`case "auto": if ctx.Semver.Prerelease != "" { ctx.PreRelease = true }`), `internal/client/github.go` line 544 (the `prerelease` and `make_latest` fields of the release request), and a run of GoReleaser against a mock GitHub API (scratch, not in the repository): tag `v1.0.0-rc1` sent `POST releases` with `draft: true, prerelease: true` and then `PATCH` with `draft: false, prerelease: true, make_latest: "false"`; tag `v1.0.0` sent `prerelease: false`. `goreleaser check` accepts the key. No prerelease tag has been published (an immutable tag cannot be reused), so the first real one is the live test; `gdcli update` also refuses a prerelease tag by itself.
+- `gdcli update` (see `update.md`) reads these assets from the API: the asset names above, the entry `gdcli` at the root of the archive, a `sha256:` digest on every asset and `immutable: true` on the release. A change of any of them (archive layout, names, immutability) breaks self-update and must be accompanied by a change of `src/update.rs`.
+- GitHub picks `releases/latest` by the creation time of the release (`created_at`), not by semver. Publish versions in increasing order; a backport published after a newer release becomes "latest" and `gdcli update` then reports `up_to_date` for users who already run the newer version.
 
 ## Attestations
 
@@ -138,7 +140,7 @@ Who: the PM agents manage tags and releases. The human owner pushes only excepti
 Tag policy:
 
 - `vX.Y.Z`, annotated (`git tag -a`), always equal to `v` plus the `version` in `Cargo.toml`, so that `gdcli --version` (clap reads `CARGO_PKG_VERSION`) always matches the tag. The release workflow triggers on `v*`.
-- SemVer: patch for fixes, minor for features. While the version is 0.x, breaking changes also bump minor. The first release is `v0.1.0`.
+- SemVer: patch for fixes, minor for features. While the version is 0.x, breaking changes also bump minor. The first release is `v0.1.0`. The next release, `v0.2.0` (the first with `gdcli update`), is planned: nothing in this file claims it exists before its tag run has finished.
 - Never force-push a branch. Never move, rewrite or delete a tag whose release was published. A tag whose run failed before the publish call (no release, or a draft) was never usable and may be deleted and re-created; this is the only permitted tag deletion.
 
 Procedure (nothing is published by hand: GoReleaser publishes the draft at the end of the run):
@@ -160,6 +162,140 @@ Verification checklist, in a clean directory (`cd "$(mktemp -d)"`), with `vX.Y.Z
 5. Release attestation, meaningful when the release is immutable: `gh release verify vX.Y.Z --repo pycabbage/gdcli` and `gh release verify-asset vX.Y.Z gdcli_linux_$(uname -m).tar.gz --repo pycabbage/gdcli`.
 6. Binary: `tar -xzf gdcli_linux_$(uname -m).tar.gz && ./gdcli --version && ./gdcli --help`. The version must print `X.Y.Z`; the archive must contain only `gdcli` at its root (`tar -tzf`).
 7. README install path in a clean home: `HOME="$(mktemp -d)" bash -c 'curl -fsSL -o gdcli.tar.gz https://github.com/pycabbage/gdcli/releases/latest/download/gdcli_linux_$(uname -m).tar.gz && mkdir -p ~/.local/bin && tar -xzf gdcli.tar.gz -C ~/.local/bin gdcli && ~/.local/bin/gdcli --version'` (the README's first two lines, plus a version check instead of the interactive `gdcli setup`). This also proves that `releases/latest/download` resolves to the new release.
+8. Self-update against the real release (needs `gh` and a Rust toolchain; run as a normal user, with `REPO` set to the checkout to test and, optionally, `CARGO_TARGET_DIR` to keep the build cache between runs; the script creates its own scratch directory `$root` with `mktemp -d`, works only below `$root` (and the optional target directory), deletes `$root` at the end only after checking that it owns it, never touches the repository, `~/.local/bin` (it is only hashed before and after) or Google credentials, and runs `gdcli` with `HOME` and the XDG variables pointing into `$root`; if `/tmp` is mounted `noexec`, set `TMPDIR` to a directory that allows executing files): the script below builds three scratch copies of the current tree with the versions 0.0.1, the latest released version and 9.0.0, installs the 0.0.1 build, runs `update` and checks the printed lines, `--version`, the API digest against the sha256 of the asset and of the installed file, the mode and owner, the leftovers, an equal version, a newer-than-release version, an install through a symlink, a 0700 file, a read-only directory and that nothing else was written. Before a release that contains `update` the installed release has no `update` command, so the second run is skipped; after the release the script also runs the installed release binary's own `update` and expects `status: up_to_date`. On failure `$root` is kept (its permissions restored) and printed at the start for inspection.
+
+```
+set -eu
+[ "$(id -u)" != 0 ] || { echo "run as non-root"; exit 1; }
+repo=${REPO:?set REPO to the checkout}
+root=$(mktemp -d)
+target=${CARGO_TARGET_DIR:-$root/target}
+trap 'chmod -R u+w "$root" 2>/dev/null || true' EXIT
+echo "scratch directory: $root"
+mkdir -p "$root/src" "$root/bins" "$root/dl" "$root/home"
+cp -r "$repo/Cargo.toml" "$repo/Cargo.lock" "$repo/src" "$repo/docs" "$root/src/"
+ensure() {
+    "$@" || { echo "FAILED: $*"; exit 1; }
+}
+expect() {
+    printf '%s\n' "$1" | grep -qxF "$2" || { echo "MISSING LINE: $2"; exit 1; }
+    echo "ok: $2"
+}
+isolated() {
+    env HOME="$root/home" XDG_CONFIG_HOME="$root/home/config" XDG_DATA_HOME="$root/home/data" "$@"
+}
+build() {
+    sed -i "0,/^version = \".*\"/s//version = \"$1\"/" "$root/src/Cargo.toml"
+    sed -n 1,3p "$root/src/Cargo.toml"
+    CARGO_TARGET_DIR="$target" cargo build --release --manifest-path "$root/src/Cargo.toml"
+    cp "$target/release/gdcli" "$root/bins/$1"
+    "$root/bins/$1" --version
+}
+stage() {
+    mkdir -p "$root/$1"
+    cp "$root/bins/$2" "$root/$1/gdcli"
+    chmod 775 "$root/$1/gdcli"
+}
+latest=$(gh api repos/pycabbage/gdcli/releases/latest --jq .tag_name)
+version=${latest#v}
+asset=gdcli_linux_$(uname -m).tar.gz
+echo "latest release: $latest"
+build 0.0.1
+build "$version"
+build 9.0.0
+gh release download "$latest" --repo pycabbage/gdcli --pattern "$asset" --dir "$root/dl"
+local_bin=$HOME/.local/bin/gdcli
+before_local=$(sha256sum "$local_bin" 2>/dev/null || echo none)
+
+echo "--- plain: 0.0.1 -> $version"
+stage plain 0.0.1
+out=$(isolated /usr/bin/time -f "maxrss=%M KB" -o "$root/rss.txt" "$root/plain/gdcli" update)
+echo "$out"
+cat "$root/rss.txt"
+expect "$out" "status: updated"
+expect "$out" "current: 0.0.1"
+expect "$out" "latest: $version"
+expect "$("$root/plain/gdcli" --version)" "gdcli $version"
+api_digest=$(gh api repos/pycabbage/gdcli/releases/latest --jq ".assets[] | select(.name==\"$asset\") | .digest")
+asset_digest=sha256:$(sha256sum "$root/dl/$asset" | cut -d' ' -f1)
+installed=$(sha256sum "$root/plain/gdcli" | cut -d' ' -f1)
+entry=$(tar -xzOf "$root/dl/$asset" gdcli | sha256sum | cut -d' ' -f1)
+echo "api digest:    $api_digest"
+echo "asset sha256:  $asset_digest"
+echo "installed:     $installed"
+echo "archive entry: $entry"
+ensure [ "$api_digest" = "$asset_digest" ]
+ensure [ "$installed" = "$entry" ]
+echo "digests ok"
+ensure [ "$(stat -c '%a %U:%G' "$root/plain/gdcli")" = "775 $(id -un):$(id -gn)" ]; echo "mode and owner ok: 775 $(id -un):$(id -gn)"
+ensure [ "$(ls -A "$root/plain")" = gdcli ]; echo "no leftovers: only gdcli"
+if "$root/plain/gdcli" --help | grep -q update; then
+    second=$(isolated "$root/plain/gdcli" update)
+    echo "$second"
+    expect "$second" "status: up_to_date"
+    expect "$second" "current: $version"
+    expect "$second" "latest: $version"
+else
+    echo "installed release has no update command yet: second run skipped"
+fi
+
+echo "--- equal version $version"
+stage same "$version"
+sha256sum "$root/same/gdcli" > "$root/same.sha"
+out=$(isolated "$root/same/gdcli" update)
+echo "$out"
+expect "$out" "status: up_to_date"
+expect "$out" "current: $version"
+expect "$out" "latest: $version"
+sha256sum -c "$root/same.sha"
+ensure [ "$(ls -A "$root/same")" = gdcli ]; echo "no leftovers: only gdcli"
+
+echo "--- newer than the release: 9.0.0"
+stage newer 9.0.0
+out=$(isolated "$root/newer/gdcli" update)
+echo "$out"
+expect "$out" "status: up_to_date"
+expect "$out" "current: 9.0.0"
+expect "$out" "latest: $version"
+
+echo "--- symlink"
+mkdir -p "$root/link/real"
+cp "$root/bins/0.0.1" "$root/link/real/gdcli"
+chmod 775 "$root/link/real/gdcli"
+ln -s real/gdcli "$root/link/gdcli"
+out=$(isolated "$root/link/gdcli" update)
+echo "$out"
+expect "$out" "status: updated"
+ensure [ -L "$root/link/gdcli" ]; echo "link kept"
+expect "$("$root/link/real/gdcli" --version)" "gdcli $version"
+echo "listing: $(ls -A "$root/link" "$root/link/real" | tr '\n' ' ')"
+
+echo "--- mode 700 stays 700"
+stage private 0.0.1
+chmod 700 "$root/private/gdcli"
+out=$(isolated "$root/private/gdcli" update)
+expect "$out" "status: updated"
+ensure [ "$(stat -c %a "$root/private/gdcli")" = 700 ]; echo "mode kept: 700"
+
+echo "--- read-only directory"
+stage readonly 0.0.1
+chmod 555 "$root/readonly"
+before=$(sha256sum "$root/readonly/gdcli")
+if isolated "$root/readonly/gdcli" update; then echo UNEXPECTED-SUCCESS; exit 1; fi
+message=$(isolated "$root/readonly/gdcli" update 2>&1 || true)
+expect "$message" "error: cannot write to $root/readonly: Permission denied (os error 13)"
+ensure [ "$before" = "$(sha256sum "$root/readonly/gdcli")" ]; echo "binary unchanged"
+chmod 755 "$root/readonly"
+ensure [ "$(ls -A "$root/readonly")" = gdcli ]; echo "no leftovers: only gdcli"
+
+echo "--- nothing else touched"
+ensure [ -z "$(ls -A "$root/home")" ]; echo "isolated HOME and XDG directories stayed empty"
+ensure [ "$before_local" = "$(sha256sum "$local_bin" 2>/dev/null || echo none)" ]; echo "~/.local/bin/gdcli unchanged"
+ensure [ -O "$root" ]
+chmod -R u+w "$root"
+rm -rf "$root"
+echo E2E-OK
+```
 
 Failure and recovery:
 

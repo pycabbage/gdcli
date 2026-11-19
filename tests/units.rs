@@ -3,11 +3,13 @@ mod common;
 use gdcli::docs::document_id;
 use gdcli::events::{meeting_code, render_time, stamp, stamp_millis};
 use gdcli::output::{compact, record, table};
+use gdcli::update::{asset, github, version};
 use gdcli::{Command, Paths, deadline_for};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::io::{Error, ErrorKind};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use url::Url;
 
 fn at(value: &str) -> OffsetDateTime {
     OffsetDateTime::parse(value, &Rfc3339).unwrap()
@@ -261,6 +263,7 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
         &["meet", "list"],
         &["meet", "get", "e"],
         &["docs", "get", "d"],
+        &["update"],
     ] {
         assert_eq!(
             deadline_for(&parse(args)),
@@ -328,4 +331,130 @@ fn xdg_directories_follow_the_spec_and_fall_back_to_the_passwd_home() {
         gdcli::message(&error),
         "cannot resolve XDG config home: set XDG_CONFIG_HOME or HOME"
     );
+}
+
+#[test]
+fn github_hosts_are_allowed_only_over_https_without_userinfo_or_a_non_default_port() {
+    for (url, allowed) in [
+        ("https://github.com/x", true),
+        ("https://api.github.com/x", true),
+        ("https://release-assets.githubusercontent.com/x", true),
+        ("https://github.com:443/x", true),
+        ("https://github.com:8443/x", false),
+        ("https://user@github.com/x", false),
+        ("https://:pw@github.com/x", false),
+        ("https://raw.github.com/x", false),
+        ("http://github.com/x", false),
+        ("https://githubusercontent.com/x", false),
+        ("https://github.com.evil.com/x", false),
+        ("https://evilgithub.com/x", false),
+        ("https://github.com@evil.com/x", false),
+        ("https://evil.com/github.com", false),
+        ("https://github.com./x", false),
+        ("ftp://github.com/x", false),
+        ("https://127.0.0.1/x", false),
+        ("https://[::1]/x", false),
+    ] {
+        assert_eq!(github(&Url::parse(url).unwrap()), allowed, "{url}");
+    }
+}
+
+#[test]
+fn the_release_tag_must_be_v_plus_a_stable_semver() {
+    assert_eq!(
+        version(&json!({"tag_name": "v0.2.0"})).unwrap().to_string(),
+        "0.2.0"
+    );
+    let malformed =
+        |tag: &str| format!("latest release tag {tag:?} is not v<major>.<minor>.<patch>");
+    for (release, tag) in [
+        (json!({"tag_name": "0.2.0"}), "0.2.0"),
+        (json!({"tag_name": "v0.2"}), "v0.2"),
+        (json!({"tag_name": "latest"}), "latest"),
+        (json!({"tag_name": ""}), ""),
+        (json!({"tag_name": 5}), ""),
+        (json!({}), ""),
+    ] {
+        assert_eq!(
+            version(&release).unwrap_err().to_string(),
+            malformed(tag),
+            "{release}"
+        );
+    }
+    assert_eq!(
+        version(&json!({"tag_name": "v1.0.0-rc.1"}))
+            .unwrap_err()
+            .to_string(),
+        "latest release v1.0.0-rc.1 is a prerelease and is not installed"
+    );
+}
+
+fn entry(name: &str) -> Value {
+    json!({
+        "name": name,
+        "browser_download_url": format!("https://github.com/x/{name}"),
+        "digest": format!("sha256:{name}-digest"),
+    })
+}
+
+fn release(assets: &Value) -> Value {
+    json!({"tag_name": "v0.2.0", "immutable": true, "assets": assets})
+}
+
+#[test]
+fn the_asset_is_picked_by_its_exact_platform_name() {
+    let release = release(&json!([
+        entry("gdcli_checksums.txt"),
+        entry("gdcli_linux_aarch64.tar.gz"),
+        entry("gdcli_linux_x86_64.tar.gz"),
+        entry("xgdcli_linux_riscv64.tar.gz"),
+        entry("gdcli_linux_riscv64.tar.gz.sig"),
+    ]));
+    for platform in ["linux_x86_64", "linux_aarch64"] {
+        let name = format!("gdcli_{platform}.tar.gz");
+        assert_eq!(
+            asset(&release, platform).unwrap(),
+            (
+                format!("https://github.com/x/{name}").as_str(),
+                format!("{name}-digest").as_str()
+            )
+        );
+    }
+    for platform in ["macos_aarch64", "linux_riscv64", "linux_x86"] {
+        assert_eq!(
+            asset(&release, platform).unwrap_err().to_string(),
+            format!("release v0.2.0 has no asset gdcli_{platform}.tar.gz")
+        );
+    }
+}
+
+#[test]
+fn an_asset_without_a_download_url_a_sha256_digest_or_an_immutable_release_is_refused() {
+    let name = "gdcli_linux_x86_64.tar.gz";
+    let url = "https://github.com/x/gdcli";
+    for broken in [
+        json!({"name": name, "digest": "sha256:ab"}),
+        json!({"name": name, "browser_download_url": url}),
+        json!({"name": name, "browser_download_url": url, "digest": null}),
+        json!({"name": name, "browser_download_url": url, "digest": "sha1:ab"}),
+        json!({"name": name, "browser_download_url": url, "digest": "ab"}),
+    ] {
+        assert_eq!(
+            asset(&release(&json!([broken])), "linux_x86_64")
+                .unwrap_err()
+                .to_string(),
+            format!("asset {name} has no download url or sha256 digest")
+        );
+    }
+    for immutable in [json!(false), json!(null), json!("true")] {
+        let mut mutable = release(&json!([entry(name)]));
+        mutable["immutable"] = immutable;
+        assert_eq!(
+            asset(&mutable, "linux_x86_64").unwrap_err().to_string(),
+            "release v0.2.0 is not immutable and is not installed"
+        );
+    }
+    let mut unreported = release(&json!([entry(name)]));
+    unreported.as_object_mut().unwrap().remove("immutable");
+    assert!(asset(&unreported, "linux_x86_64").is_err());
 }

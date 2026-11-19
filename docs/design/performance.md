@@ -22,18 +22,24 @@ Priorities: startup time, resident memory, bytes transferred, number of round tr
 
 ## Measurements (x86_64 Linux, release profile, rustc 1.100)
 
-| Measurement | Before the REST layer (generated Google crates, chrono) | After the REST layer | Now (JSON, tabs, metadata, counts) |
-|---|---|---|---|
-| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,661,096 bytes |
-| Unique packages in the normal dependency tree, including gdcli (`cargo tree -e normal --prefix none --no-dedupe \| sed 's/ (.*//' \| sort -u \| wc -l`) | 123 | 108 | 109 (`foldhash` through `preserve_order`) |
-| Peak RSS of `gdcli --help` (`/usr/bin/time -f %M`, 3 runs) | 3576, 3576, 3632 KB | 3468, 3388, 3376 KB | 3536, 3700, 3572 KB |
-| Peak RSS of a command with a real HTTPS round trip to Google and an invalid token (so the answer is a small 401) | 6.0 to 6.3 MB | 5.6 to 5.8 MB | `calendar list` 5728, `meet list` 5888, `docs get --tab` 5600, `docs metadata` 5888 KB |
-| TCP connections to port 443 per command (`strace -f -e trace=connect -o out gdcli <command>`, then `grep -c 'sin_port=htons(443)\|sin6_port=htons(443)' out`; invalid-token setup) | `calendar list` 2, `meet get` 4 (before HTTP/2-only) | 1 for every command | 1 for every command except `docs metadata`: 2, because Drive (`www.googleapis.com`) and the Docs API (`docs.googleapis.com`) are two hosts, one HTTP/2 connection each, run concurrently |
-| Source lines, `src/` (non-blank, after `cargo fmt`) | 1282 | 929 | 1324 (log in `code-reduction.md`) |
+| Measurement | Before the REST layer (generated Google crates, chrono) | After the REST layer | Now (JSON, tabs, metadata, counts) | With `gdcli update` |
+|---|---|---|---|---|
+| Binary size (stripped) | 4,334,864 bytes | 3,565,016 bytes | 3,661,096 bytes | 3,812,312 bytes (+151,216, +4.13 %; aarch64 `cargo zigbuild`: 3,264,784 bytes) |
+| Unique packages in the normal dependency tree, including gdcli (`cargo tree -e normal --prefix none --no-dedupe \| sed 's/ (.*//' \| sort -u \| wc -l`) | 123 | 108 | 109 (`foldhash` through `preserve_order`) | 121 (`self-replace`, `tempfile`, `tar`, `flate2`, `semver`, `zlib-rs`, `fastrand`, `rustix`, `linux-raw-sys`, `bitflags`, `filetime`, `getrandom` 0.4.3) |
+| Peak RSS of `gdcli --help` (`/usr/bin/time -f %M`, 3 runs) | 3576, 3576, 3632 KB | 3468, 3388, 3376 KB | 3536, 3700, 3572 KB | 3848, 3760, 3784 KB |
+| Peak RSS of a command with a real HTTPS round trip to Google and an invalid token (so the answer is a small 401) | 6.0 to 6.3 MB | 5.6 to 5.8 MB | `calendar list` 5728, `meet list` 5888, `docs get --tab` 5600, `docs metadata` 5888 KB | not re-measured (no change to the Google path); `gdcli update` against the real release: 6116 KB in the final run (6108 to 6288 KB over four runs; staging in the install directory, no tmpfs) |
+| TCP connections to port 443 per command (`strace -f -e trace=connect -o out gdcli <command>`, then `grep -c 'sin_port=htons(443)\|sin6_port=htons(443)' out`; invalid-token setup) | `calendar list` 2, `meet get` 4 (before HTTP/2-only) | 1 for every command | 1 for every command except `docs metadata`: 2, because Drive (`www.googleapis.com`) and the Docs API (`docs.googleapis.com`) are two hosts, one HTTP/2 connection each, run concurrently | not measured for `update` (it talks to `api.github.com`, `github.com` and `release-assets.githubusercontent.com`, three hosts, HTTP/2 only) |
+| Source lines, `src/` (non-blank, after `cargo fmt`) | 1282 | 929 | 1324 (log in `code-reduction.md`) | 1551 (`src/update.rs` 223 non-blank, 235 with blank lines; log in `code-reduction.md`) |
 
 With an invalid token `meet get` and `docs get --tab` stop after the first request, so their connection counts for the full flows (events, space, records, artifacts; tab list, export and the redirect to the content host) have to be measured with a valid token. The tab export touches three hosts by design: `docs.googleapis.com` (tab list), `docs.google.com` (export) and the `googleusercontent.com` content host (the redirect target, fetched without the token).
 
 Measuring a successful call needs real credentials and was not done here; the streaming and ring-buffer designs bound the memory of the success paths independent of document or calendar size. The `--past` / `--upcoming` counts bound the memory of the lists by N.
+
+## `gdcli update`
+
+- One HTTP/2 client from `google::https_builder()`; the archive is streamed from hyper into the hash and an unnamed file in the install directory (no whole-archive buffer, no tmpfs staging); only the API JSON (about 10 KB) is buffered. The extracted binary is copied once with `io::copy` into a staging file, then once more by `self-replace` next to the executable.
+- Size limits (32 MiB for the download and the entry, 128 MiB inflated) bound disk and memory; the `zlib-rs` backend of `flate2` is the faster pure-Rust inflater and keeps four small packages out of the tree. Details and measurements: `update.md`.
+- Binary size with `gdcli update`: 3,812,312 bytes (+151,216, +4.13 %) against 3,661,096 before; investigate any later increase above +5 % (3,844,150 bytes).
 
 ## Not done on purpose
 

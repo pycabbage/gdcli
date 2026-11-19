@@ -15,6 +15,7 @@ The product description is the first line of README.md (also `description` in Ca
 | `src/calendar.rs` | `calendar list` (calls `events::list`), `calendar get`: the curated record model of an event |
 | `src/meet.rs` | `meet list` (calls `events::list`), `meet get <event id>`: `events.get`, then `spaces.get` and `conferenceRecords.list` concurrently, then participants, recordings and transcripts per record, assembled into one record; each Meet call tolerates 403/404 on its own |
 | `src/docs.rs` | `docs get` (whole document through Drive export, or one tab through `export_tab`), tab list and tab resolution (`tabs()`, `resolve_tab()`), `docs metadata` |
+| `src/update.rs` | `gdcli update`: `run()` (production values: the HTTPS-only HTTP/2 client, the `github` host predicate, the API URL, the directory of `current_exe()`, `self_replace::self_replace`, a 32 MiB limit) and `run_with()` (the same flow with injected `Fetcher`, API URL and `Install`, used by the tests); the pure helpers `github`, `version` and `asset`; `Fetcher::send` (redirects limited to the allowed hosts), `Fetcher::ok` (rate limit and status mapping), `Fetcher::archive` (streamed download with SHA-256), `extract` (the entry named `gdcli`). It imports neither `auth` nor `Google` (design: `update.md`) |
 | `src/output.rs` | `compact()` (drop empty values), `record()` (JSON line, or the generic text rendering of the same record), `table()` (header and TSV rows, or a JSON array of objects keyed by the header) |
 | `src/auth/mod.rs` | `SCOPES` |
 | `src/auth/token.rs` | `authenticator()` (login flow or fail-fast flow), `login()` |
@@ -27,7 +28,7 @@ Events, Meet resources and Drive answers are handled as `serde_json::Value`: the
 ## Data flow
 
 1. `run` resolves `Paths` from the XDG variables and the optional deadline from the command.
-2. API commands call `Google::connect`: read `client_secret.json`, build a non-interactive yup-oauth2 authenticator backed by `token.json`, build one hyper client (rustls, HTTP/2 only) shared by the API calls and the OAuth token requests.
+2. API commands call `Google::connect` (`update` does not: it needs no credentials and talks to GitHub through its own `Fetcher`): read `client_secret.json`, build a non-interactive yup-oauth2 authenticator backed by `token.json`, build one hyper client (rustls, HTTP/2 only) shared by the API calls and the OAuth token requests.
 3. The command issues its API calls (concurrently with `tokio::join!` when independent), converts the JSON to text and writes it to stdout.
 
 ## Dependencies

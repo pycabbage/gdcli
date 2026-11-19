@@ -13,6 +13,7 @@ gdcli calendar list      latest 10 calendar events (default past 5, future 5; --
 gdcli calendar get <id>  get and show an event
 gdcli docs get <id>      get a Google Doc as Markdown; --tab <id|name> selects one tab
 gdcli docs metadata <id> metadata of a Google Doc
+gdcli update             update gdcli from the latest GitHub release
 ```
 
 - `--json` (same information as JSON) exists on meet/calendar list and get and on `docs metadata`, never on `docs get`.

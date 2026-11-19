@@ -7,6 +7,7 @@ pub mod google;
 pub mod meet;
 pub mod output;
 pub mod paths;
+pub mod update;
 
 pub use cli::{CalendarCommand, Cli, Command, DocsCommand, MeetCommand};
 pub use paths::Paths;
@@ -62,6 +63,7 @@ async fn execute(command: Command, paths: &Paths) -> Result<()> {
         Command::Docs(DocsCommand::Metadata { id, json }) => {
             docs::metadata(&google().await?, &id, json, &mut out).await
         }
+        Command::Update => update::run(&mut out).await,
     }
 }
 

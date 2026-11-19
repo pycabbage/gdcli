@@ -41,6 +41,8 @@ pub enum Command {
     Calendar(CalendarCommand),
     #[command(subcommand, about = "Google Docs documents")]
     Docs(DocsCommand),
+    #[command(about = "Update gdcli from the latest GitHub release")]
+    Update,
 }
 
 #[derive(Debug, Clone, Args)]

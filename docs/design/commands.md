@@ -13,7 +13,7 @@ Common rules:
 - A closed output pipe (`gdcli calendar list | head -1`) ends the command quietly with exit status 0 and no message. Only an I/O error of kind `BrokenPipe` raised directly by writing the output counts; a broken pipe inside a network error is a normal error.
 - ID arguments: `calendar get` and `meet get` take an event id; clap rejects an empty id, `.`, `..` and any id containing `/ ? # %` with `invalid event id` (exit status 2) before any request is built. `docs get` and `docs metadata` take a document id or docs URL; an empty id, `.` and `..` are rejected with `invalid document id` (exit status 2).
 - `--json` exists on exactly `calendar list`, `calendar get`, `meet list`, `meet get` and `docs metadata`. It does not exist on `docs get`: the option is allowed only when no official Markdown API exists, and Drive `files.export` is the official Markdown API.
-- Timeouts: connecting to a Google host fails after 10 s, and an API command (everything except `setup` and `login`, which wait for the user) fails with `error: timed out after 120s` when it has not finished after 120 s.
+- Timeouts: connecting to a Google or GitHub host fails after 10 s, and an API command (everything except `setup` and `login`, which wait for the user) fails with `error: timed out after 120s` when it has not finished after 120 s.
 - `fields` partial responses are sent on every JSON request, so only the printed data is transferred.
 
 Error text: every message is built from our own lowercase context (`cannot ...`, `token retrieval failed: ...`, `google api error ...`, `request failed: ...`), so the first character is lowercase by construction and no formatting helper exists; a binary-level test checks the real stderr. Google API errors print as `google api error <status>: <message>` when the response carries a JSON `error.message` (cut at 300 characters, `...` appended), and as `google api error <status> <reason>` (for example `google api error 429 Too Many Requests`) otherwise, for Calendar, Drive, Docs and Meet alike. A successful answer that is not JSON prints `unexpected google api response: <parse error>`. Raw response bodies, headers and debug dumps are never printed.
@@ -25,6 +25,55 @@ Prints `docs/setup.md`, `Destination: <path>`, and the prompt `Path of the downl
 ## `gdcli login`
 
 Runs the OAuth login flow. Prints the authorization URL, then `logged in; token stored at <path>`.
+
+## `gdcli update`
+
+Replaces the running executable with the latest GitHub release of `pycabbage/gdcli` (design, security level and bounds: `update.md`). No arguments and no options (`update --json` and `update x` are usage errors, exit status 2; there is no `--json` because the output is three labeled lines and `--json` is listed only for the commands above). It needs no Google credentials and never reads or writes the config or data directories.
+
+Output on stdout, exit status 0, rendered by `output::record` (keys always `status`, `current`, `latest`):
+
+```
+status: updated
+current: 0.1.1
+latest: 0.2.0
+```
+
+```
+status: up_to_date
+current: 0.2.0
+latest: 0.2.0
+```
+
+- `updated`: the replacement succeeded; the next start of `gdcli` is `latest`; `current` is the version that ran the command.
+- `up_to_date`: `latest <= current` (a development build newer than the release prints both values). One API request, nothing written.
+- Nothing is printed to stdout on failure; stderr gets `error: <message>` and the exit status is 1.
+
+| Situation | stderr |
+|---|---|
+| DNS, connect, TLS or transport failure | `error: request failed: <error chain>` |
+| 120 s deadline | `error: timed out after 120s` |
+| 403 or 429 with `x-ratelimit-remaining: 0` | `error: github api rate limit exceeded; resets at 2026-11-19T01:36:49Z` (from `x-ratelimit-reset`; without a usable reset header just `github api rate limit exceeded`) |
+| 404 on the latest-release URL (no published release) | `error: github has no published release for pycabbage/gdcli` |
+| any other non-2xx status, including a 3xx without a usable `Location`, on any URL | `error: github api error <status>` with the status as `http::StatusCode` prints it, for example `github api error 404 Not Found` |
+| the API body is not JSON | `error: unexpected github api response: <parse error>` |
+| tag missing or not `v<major>.<minor>.<patch>` | `error: latest release tag "x" is not v<major>.<minor>.<patch>` |
+| tag with a prerelease part | `error: latest release v1.0.0-rc.1 is a prerelease and is not installed` |
+| release not immutable | `error: release v0.2.0 is not immutable and is not installed` |
+| no asset for this platform | `error: release v0.2.0 has no asset gdcli_linux_riscv64.tar.gz` |
+| asset without URL or without a `sha256:` digest | `error: asset gdcli_linux_x86_64.tar.gz has no download url or sha256 digest` |
+| install directory not writable (checked before the download) | `error: cannot write to /usr/bin: Permission denied (os error 13)` |
+| host, scheme, port or userinfo not allowed (first URL or a redirect) | `error: refusing to fetch from unexpected host or scheme https://example.com` (scheme and host only) |
+| `browser_download_url` is not a URL | `error: invalid download url: <parse error>` |
+| more than 3 redirects | `error: too many redirects` |
+| the response body breaks while downloading | `error: download failed: <error chain>` |
+| writing the download to the staging file fails (for example a full disk) | `error: cannot write the download: <io error>` |
+| download over the limit | `error: download exceeds 33554432 bytes` |
+| digest differs | `error: checksum mismatch: expected <64 hex>, got <64 hex>` |
+| gzip or tar damaged, the inflated stream exceeds four times the limit, or creating or writing the extracted binary fails (for example a full disk) | `error: cannot extract the archive: <io error>` |
+| no regular file named exactly `gdcli` (also: it is a symlink or a directory, or the inflated stream was cut at an entry boundary) | `error: archive has no regular file named gdcli` |
+| entry `gdcli` over the limit | `error: archive entry gdcli is larger than 33554432 bytes` |
+| the replacement itself fails | `error: cannot replace the executable in /usr/bin: <io error>` |
+| the location of the running executable cannot be determined | `error: cannot locate the running executable` |
 
 ## `gdcli calendar list [--past N] [--upcoming N] [--json]`
 

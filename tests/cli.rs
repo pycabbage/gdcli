@@ -15,6 +15,7 @@ fn definition_is_consistent() {
 fn parses_every_specified_command() {
     assert!(matches!(parse(&["setup"]), Ok(Command::Setup)));
     assert!(matches!(parse(&["login"]), Ok(Command::Login)));
+    assert!(matches!(parse(&["update"]), Ok(Command::Update)));
     match parse(&["meet", "list"]) {
         Ok(Command::Meet(MeetCommand::List(args))) => {
             assert_eq!((args.past, args.upcoming, args.json), (5, 5, false));
@@ -100,6 +101,8 @@ fn json_exists_exactly_where_the_owner_asked_for_it() {
         &["docs", "get", "d", "--json"][..],
         &["setup", "--json"],
         &["login", "--json"],
+        &["update", "--json"],
+        &["update", "now"],
         &["docs", "metadata", "d", "--tab", "x"],
         &["calendar", "get", "e", "--past", "1"],
     ] {

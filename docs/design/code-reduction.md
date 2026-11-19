@@ -64,3 +64,17 @@ Before: `src/` 1323, `tests/` 3147. After: `src/` 1324 (+1), `tests/` 3167 (+20)
 | 31 | case-insensitive content-type compare via `map(str::to_ascii_lowercase)` | src +1 | kept |
 | 32 | delete the nested-object arm of `pairs` (records have at most one level of nesting) and let a nested object fall into the quoted-JSON arm | src 0 (the arm changed from recursion to one quoted-JSON `push`; a pure deletion would silently drop an unexpected object, which the owner's equivalence rule forbids) | kept, now pinned by a test |
 
+## Wave 4: `gdcli update`
+
+Before: `src/` 1324, `tests/` 3173 (non-blank, after `cargo fmt`). After: `src/` 1551 (+227: `update.rs` 223, `cli.rs` 2, `lib.rs` 2; `wc -l` of `update.rs` is 235), `tests/` 3908 (+735: `update.rs` 22 tests with the fixture, 4 unit tests, three extended assertions).
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 33 | `Asset` struct replaced by a `(url, sha256)` tuple, `Fetcher::new` removed in favour of public fields, the install directory derived from `current_exe()` in one expression | `update.rs` 247 to 238 lines (`wc -l`, measured together with the three changes) | kept |
+| 34 | one `github` predicate using `url.authority() == host` instead of separate userinfo, port and scheme checks | not measured separately (the three checks would be about 3 lines longer) | kept |
+| 35 | shared `https_host` helper with `google::googleusercontent` | estimated -1 line and an edit of a tested Google path | not done |
+| 36 | the reset time in the rate-limit message (`time` is already a dependency) | not measured separately (about 7 lines) | kept: it tells an agent when to retry |
+| 37 | `self-replace` and `semver` instead of hand-written replace and version compare | not written, estimated 12 and 8 lines | kept |
+| 38 | `--check`, `--json`, token support | not written | not done |
+| 39 | review fixes: context on the download write, one neutral extraction message, `Fetcher::archive` public for a test, its `sha256` parameter renamed `want` so the signature and the checksum `ensure!` each fit on one line | `update.rs` 238 to 235 (`wc -l`, measured) | kept |
+| 40 | the staged-file creation in `extract` gets the same `cannot extract the archive` context (`commands.md` promises it for a full disk after the download) | `update.rs` stays at 235 lines (`wc -l`, measured) | kept |
