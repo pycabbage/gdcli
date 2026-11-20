@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use gdcli::cli::ListArgs;
+use gdcli::cli::{AccountArg, ListArgs};
 use gdcli::google::Google;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::Client;
@@ -27,6 +27,7 @@ pub fn args() -> ListArgs {
         past: 5,
         upcoming: 5,
         json: false,
+        account: AccountArg::default(),
     }
 }
 
@@ -35,21 +36,31 @@ pub struct Harness {
     pub api: Google,
 }
 
+pub async fn google_at(root: &str) -> Google {
+    let connector = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .build();
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+    let auth = AccessTokenAuthenticator::builder(TOKEN.to_owned())
+        .build()
+        .await
+        .unwrap();
+    Google::new(client, auth, [root; 4], local)
+}
+
+pub async fn unreachable() -> Google {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let root = format!("http://{}/", listener.local_addr().unwrap());
+    drop(listener);
+    google_at(&root).await
+}
+
 impl Harness {
     pub async fn start() -> Self {
         let server = MockServer::start().await;
-        let root = format!("{}/", server.uri());
-        let connector = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
-            .https_or_http()
-            .enable_http1()
-            .build();
-        let client = Client::builder(TokioExecutor::new()).build(connector);
-        let auth = AccessTokenAuthenticator::builder(TOKEN.to_owned())
-            .build()
-            .await
-            .unwrap();
-        let api = Google::new(client, auth, [&root, &root, &root, &root], local);
+        let api = google_at(&format!("{}/", server.uri())).await;
         Self { server, api }
     }
 
@@ -76,6 +87,11 @@ impl Harness {
             .and(path(route))
             .respond_with(ResponseTemplate::new(status).set_body_json(body))
             .mount(&self.server)
+            .await;
+    }
+
+    pub async fn mount_about(&self, email: &str) {
+        self.mount_json("/drive/v3/about", json!({"user": {"emailAddress": email}}))
             .await;
     }
 

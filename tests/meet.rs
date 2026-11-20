@@ -638,6 +638,7 @@ async fn list_counts_and_json_follow_the_same_rows() {
         past: 2,
         upcoming: 3,
         json: true,
+        ..common::args()
     };
     let mut out = Vec::new();
     meet::list(&harness.api, now(), &args, &mut out)
@@ -677,6 +678,7 @@ async fn list_json_empty() -> String {
         past: 5,
         upcoming: 5,
         json: true,
+        ..common::args()
     };
     let mut out = Vec::new();
     meet::list(&harness.api, now(), &args, &mut out)
@@ -700,6 +702,7 @@ async fn meet_upcoming_pages_use_at_least_25_and_at_most_250_events() {
             past: 0,
             upcoming: requested,
             json: false,
+            ..common::args()
         };
         meet::list(&harness.api, now(), &args, &mut Vec::new())
             .await

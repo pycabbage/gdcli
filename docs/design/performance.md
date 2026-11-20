@@ -11,13 +11,14 @@ Priorities: startup time, resident memory, bytes transferred, number of round tr
 - tokio `current_thread` runtime with only the `rt`, `macros` and `time` features (`time` for the overall deadline); no worker threads.
 - Independent requests are concurrent with `tokio::try_join!` on one shared hyper client: past and upcoming lookups in `calendar list` and `meet list` (both Calendar only); space lookup and conference list in `meet get`, then participants, recordings and transcripts of each conference record.
 - The production client is HTTP/2-only (`http2_only(true)` on the hyper-util builder, ALPN `h2` on the rustls connector; every Google endpoint speaks h2), so concurrent requests are multiplexed over one TCP+TLS connection instead of each opening its own. Tests build their own protocol-negotiating client with a plain-HTTP connector for wiremock; production code uses `google::https_builder()` with the https-only connector (plain HTTP can never be reached in production). The same builder serves the OAuth token client.
-- Timeouts (constants in `src/google.rs`): 10 s TCP connect timeout on the connector, and a 120 s deadline around every API command (`with_deadline`; `setup` and `login` wait for the user and are exempt), failing with `error: timed out after 120s`.
+- Timeouts (constants in `src/google.rs`): 10 s TCP connect timeout on the connector, and a 120 s deadline around every command (`with_deadline`; `auth setup` and `auth login` wait for the user and are exempt, but inside `auth login` the migration and the account discovery are bounded by it), failing with `error: timed out after 120s`.
 - Every JSON request sends the `fields` partial-response parameter (the Markdown export has none); responses contain only printed fields. Responses are handled as `serde_json::Value`, with no typed models and no generated crates.
 - `calendar list` upcoming requests `maxResults=5`; past windows keep a 5 element ring buffer instead of collecting a window.
 - `docs get` writes each body frame to stdout as it arrives; the document is never held in memory. Only the error path buffers (a small JSON error body).
 - Rendering writes directly into the caller's `impl Write`.
-- Dependencies are pulled with default features off (clap, tokio, hyper-rustls, hyper-util, time, yup-oauth2). Non-auth commands never open a listening socket and never start a browser flow.
-- Directories are created only when something is written (`login` creates the data directory; no other command creates any).
+- Dependencies are pulled with default features off (clap, tokio, hyper-rustls, hyper-util, time, yup-oauth2). Only `auth login` and `auth setup` open a listening socket or start a browser flow.
+- Directories are created only when something is written (`auth login`, `auth setup` and the one-time migration create the data and `accounts/` directories; no other command creates any).
+- Selecting the account costs one read of the small `default` pointer and two `stat` calls per command (`accounts/<email>.json` and the legacy `token.json`); the only extra request ever is the one-time `GET drive/v3/about` of the migration (and one per `auth login`, to identify the account), on the same HTTP/2 connection as the token refresh.
 - `calendar list` and `meet list` send the `eventTypes` filter (default, focusTime, outOfOffice, fromGmail), so working-location and birthday entries are neither transferred nor parsed.
 
 ## Measurements (x86_64 Linux, release profile, rustc 1.100)

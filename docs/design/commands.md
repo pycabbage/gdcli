@@ -5,26 +5,52 @@ All output is plain UTF-8 text on stdout (or JSON with `--json`), designed to be
 Common rules:
 
 - One model, two renderings. Every `get` command (and `docs metadata`) builds ONE ordered record (a JSON object, key order is part of the contract) with our own snake_case names, empty values removed. `--json` prints that record on one line; the text rendering is one generic function over the same record, so both carry exactly the same information (the tests compare every text line with the record, including `false` values). Text rules: a top-level scalar is `key: value`; an array of scalars prints one `key: value` line per element with the singular key (the array key without its trailing `s`: `recurrence` stays, `attendees` gives `attendee:`); an array element that is an object, and a nested object value (`organizer`), print ONE line `key: name=value name=value ...` with every scalar leaf as a `name=value` pair in field order, using exactly the JSON field names, so no value is ever positional; a value is bare unless it is empty or contains whitespace, `"` or `=`, in which case it is JSON-quoted (`name="Dr. Bee"`); numbers and booleans print as they are (`index=0`, `optional=false`; `false` is never dropped); arrays nested inside an array element print after its line, with their own singular keys; records have at most one level of nesting inside array elements and objects, and an object nested deeper (which no record produces today) is never dropped but printed as one quoted JSON string value (`inner="{\"b\":\"x y\"}"`); an empty array prints `key: none` (singular key); multi-line top-level scalars (CR and CRLF are normalised to LF) continue on the following lines indented by two spaces; null and empty values never appear.
-- List commands (`calendar list`, `meet list`) print a header line first (always, also when there are no items; a static string, the same number of tab-separated columns as every row), then one tab-separated line per item, chronological ascending (oldest first), past items before upcoming items. Tabs, CR and LF inside values are replaced by a space. Missing values are empty columns (a row may end with a tab when its last column is empty). If the API calls fail, nothing is printed, not even the header. With `--json` the output is one JSON array of objects whose keys are exactly the header column names (all values strings), same rows, same order; no items print `[]`.
+- List commands (`calendar list`, `meet list`, `auth list`) print a header line first (always, also when there are no items; a static string, the same number of tab-separated columns as every row), then one tab-separated line per item. `calendar list` and `meet list` are chronological ascending (oldest first), past items before upcoming items; `auth list` has no past or upcoming grouping, its rows are sorted by email. Tabs, CR and LF inside values are replaced by a space. Missing values are empty columns (a row may end with a tab when its last column is empty). If the API calls fail, nothing is printed, not even the header. With `--json` the output is one JSON array of objects whose keys are exactly the header column names (all values strings), same rows, same order; no items print `[]` (`auth list` has no `--json`).
 - JSON is compact (no pretty printing) and ends with one newline.
 - `id` is the FIRST column of every list row, it is always the Calendar event id (the occurrence id returned with `singleEvents=true`: unique per occurrence and in the same format for past and upcoming rows), and it is the argument of both `gdcli calendar get <id>` and `gdcli meet get <id>`. Both list commands read only the Calendar API; the Meet REST API is used only by `meet get`.
 - Why the Calendar event is the identity: Meet has no object for future meetings, and a conference record carries no link to the calendar event or occurrence it was started from. The Calendar event is therefore the only identity that exists for both past and upcoming meetings. Known limitation: ad-hoc meetings that were started without a calendar event are not listed.
 - Timestamps: timed events are printed as RFC 3339 in UTC with second precision (`2026-11-18T09:30:00Z`) in lists and in `calendar get`/`meet get`; all-day events as their plain local calendar date (`2026-11-20`, not a UTC instant); Meet timestamps of conference records, participants and artifacts and the Drive times of `docs metadata` are passed through exactly as the API returns them. `docs get` prints Google's export bytes unchanged (no trailing newline is added).
 - A closed output pipe (`gdcli calendar list | head -1`) ends the command quietly with exit status 0 and no message. Only an I/O error of kind `BrokenPipe` raised directly by writing the output counts; a broken pipe inside a network error is a normal error.
 - ID arguments: `calendar get` and `meet get` take an event id; clap rejects an empty id, `.`, `..` and any id containing `/ ? # %` with `invalid event id` (exit status 2) before any request is built. `docs get` and `docs metadata` take a document id or docs URL; an empty id, `.` and `..` are rejected with `invalid document id` (exit status 2).
-- `--json` exists on exactly `calendar list`, `calendar get`, `meet list`, `meet get` and `docs metadata`. It does not exist on `docs get`: the option is allowed only when no official Markdown API exists, and Drive `files.export` is the official Markdown API.
-- Timeouts: connecting to a Google or GitHub host fails after 10 s, and an API command (everything except `setup` and `login`, which wait for the user) fails with `error: timed out after 120s` when it has not finished after 120 s.
+- `--json` exists on exactly `calendar list`, `calendar get`, `meet list`, `meet get` and `docs metadata`. It does not exist on `auth *` (labeled lines or a table), `update` or `docs get`: the option is allowed only when no official Markdown API exists, and Drive `files.export` is the official Markdown API.
+- `--account <email>` (`-a`; `cli::AccountArg`, flattened into the arguments) exists on exactly the Google leaf commands `calendar list|get`, `meet list|get` and `docs get|metadata`, and nowhere else: not on `auth *` (they manage accounts), not on `update` (it talks to GitHub and never reads credentials; an option that does nothing would lie). Help text: `Google account (email) to use instead of the default`. The value is validated by the parser (`invalid value 'bad' for '--account <EMAIL>': expected an email address such as name@example.com`, exit status 2) and lowercased. Resolution order and the account errors: `accounts.md`.
+- Timeouts: connecting to a Google or GitHub host fails after 10 s, and every command except `auth setup` and `auth login` (which wait for the user) fails with `error: timed out after 120s` when it has not finished after 120 s; inside `auth login` the migration of an old token and the identification of the new account are each bounded by the same 120 s.
 - `fields` partial responses are sent on every JSON request, so only the printed data is transferred.
 
-Error text: every message is built from our own lowercase context (`cannot ...`, `token retrieval failed: ...`, `google api error ...`, `request failed: ...`), so the first character is lowercase by construction and no formatting helper exists; a binary-level test checks the real stderr. Google API errors print as `google api error <status>: <message>` when the response carries a JSON `error.message` (cut at 300 characters, `...` appended), and as `google api error <status> <reason>` (for example `google api error 429 Too Many Requests`) otherwise, for Calendar, Drive, Docs and Meet alike. A successful answer that is not JSON prints `unexpected google api response: <parse error>`. Raw response bodies, headers and debug dumps are never printed.
+Error text: every message is built from our own lowercase context (`cannot ...`, `token retrieval failed: ...`, `google api error ...`, `request failed: ...`), so the first character is lowercase by construction and no formatting helper exists; a binary-level test checks the real stderr. Google API errors print as `google api error <status>: <message>` when the response carries a JSON `error.message` (cut at 300 characters, `...` appended), and as `google api error <status> <reason>` (for example `google api error 429 Too Many Requests`) otherwise, for Calendar, Drive, Docs and Meet alike. A successful answer that is not JSON prints `unexpected google api response: <parse error>`. Raw response bodies, headers and debug dumps are never printed. The account messages (``no account is logged in: run `gdcli auth login` ``, `unknown account ...`, `no default account; ...`, `cannot identify the account: ...`, the token messages that name the account) are listed in `accounts.md`; every hint names `gdcli auth login` or `gdcli auth setup` (0.3.0 said `gdcli login` and `gdcli setup`).
 
-## `gdcli setup`
+## `gdcli auth setup`
 
 Prints `docs/setup.md`, `Destination: <path>`, and the prompt `Path of the downloaded JSON (empty if already placed at the destination): `. The typed path is trimmed, surrounding quotes are removed and a leading `~/` is expanded to the home directory. Then installs and validates the client secret and runs the login flow (see `auth.md`).
 
-## `gdcli login`
+## `gdcli auth login`
 
-Runs the OAuth login flow. Prints the authorization URL, then `logged in; token stored at <path>`.
+Runs the OAuth login flow for one Google account (the browser shows the account chooser). Prints the authorization URL, then three lines rendered by `output::record` after the login succeeded: `account: <email>`, `status: added` (a new account) or `status: refreshed` (an account that was already known; its token is replaced) and `default: true` or `default: false`. The first account becomes the default. Nothing is deleted before the new token exists. Layout, migration and errors: `accounts.md`.
+
+```
+account: bob@example.org
+status: added
+default: false
+```
+
+## `gdcli auth list`
+
+Header `account<TAB>default`, then one row per logged-in account sorted by email; `default` is `true` for the account that `--account`-less commands use and `false` otherwise (no row is marked when the pointer is stale or when several accounts exist and no default was chosen; the command still succeeds). The header alone is printed when there is no account. No `--json`.
+
+```
+account	default
+alice@example.com	true
+bob@example.org	false
+```
+
+## `gdcli auth set-default <email>`
+
+Makes a logged-in account the default and prints `account: <email>` and `default: true`. An address without an account is `unknown account <email>; known accounts: <known>`. The email is validated and lowercased like `--account`. There is no top-level `gdcli set-default`.
+
+```
+account: bob@example.org
+default: true
+```
 
 ## `gdcli update`
 
@@ -78,7 +104,7 @@ latest: 0.2.0
 | the replacement itself fails | `error: cannot replace the executable in /usr/bin: <io error>` |
 | the location of the running executable cannot be determined | `error: cannot locate the running executable` |
 
-## `gdcli calendar list [--past N] [--upcoming N] [--json]`
+## `gdcli calendar list [--past N] [--upcoming N] [--json] [-a, --account EMAIL]`
 
 Primary calendar. `--past N` and `--upcoming N` (alias `--future`) choose how many items of each side are fetched: default 5 each, accepted range 0 to 1000 (clap rejects the rest with exit status 2). `0` skips that side entirely: no request is made for it. Memory stays bounded by N (a ring buffer of N for the past side, N collected events for the upcoming side). The first line is the header `id<TAB>when<TAB>start<TAB>end<TAB>summary` (`events::CALENDAR_HEADER`, the only copy of the text); the JSON keys are the same five names.
 
@@ -97,7 +123,7 @@ Selection (the two lookups run concurrently; one implementation, `events::list`,
 - Past: the API cannot sort descending, so the newest past events are found by searching backwards over nested windows `[now - w, now)` for `w` = 7, 30, 180 and 730 days (`timeMax=now`, `orderBy=startTime`, `maxResults=250`). Within a window all pages are read, the predicate is applied first, and only the last N events that have ended (`end <= now`, not cancelled) are kept in a ring buffer. The search stops at the first window that yields N events; if even the 730 day window has fewer, those are printed.
 - An event is in exactly one group: `end <= now` is past, otherwise upcoming; both groups drop events on the other side of that line (so a server answer that disagrees with the client clock cannot print an event twice) and cancelled events. All-day events are treated as ending at 00:00 UTC of their exclusive end date, while the server filters `timeMin`/`timeMax` in the calendar's time zone, so in time zones ahead of UTC an all-day event can be absent from both lists for a few hours around its end. The time zone is not requested to correct this.
 
-## `gdcli calendar get <id> [--json]`
+## `gdcli calendar get <id> [--json] [-a, --account EMAIL]`
 
 `events.get` on the primary calendar with a `fields` mask. The record, in this order (keys absent when empty):
 
@@ -121,7 +147,7 @@ Selection (the two lookups run concurrently; one implementation, `events::list`,
 
 Text example: `id: abc`, `summary: Planning`, ..., `organizer: name=Boss email=boss@example.com`, `attendee: name=Bee email=b@example.com response_status=needsAction optional=true`, `entry_point: type=video uri=https://meet.google.com/abc-defg-hij`, `description: First line` (continuation lines indented by two spaces).
 
-## `gdcli meet list [--past N] [--upcoming N] [--json]`
+## `gdcli meet list [--past N] [--upcoming N] [--json] [-a, --account EMAIL]`
 
 The first line is the header `id<TAB>when<TAB>start<TAB>end<TAB>meeting_code<TAB>summary` (`events::MEET_HEADER`; the JSON keys are the same six names). It is `calendar list` restricted to events that carry a Google Meet link (`conferenceData.conferenceSolution.key.type == hangoutsMeet`, not cancelled), with one extra column. The count options work as in `calendar list`; for Meet the upcoming page size stays 25.
 
@@ -136,7 +162,7 @@ The first line is the header `id<TAB>when<TAB>start<TAB>end<TAB>meeting_code<TAB
 
 Same selection rules as `calendar list` (past = ended, a running meeting counts as upcoming, cancelled events dropped, no duplicates, nested past windows with the predicate applied before the N element ring buffer). The `fields` mask adds `conferenceData(conferenceId,conferenceSolution(key(type)))` to the calendar mask. The Meet REST API is not called, so the list needs no Meet scope or Meet API access.
 
-## `gdcli meet get <id> [--json]`
+## `gdcli meet get <id> [--json] [-a, --account EMAIL]`
 
 `<id>` is the event id printed by `meet list` or `calendar list`; nothing else is accepted (no meeting codes, no conference record ids). Flow:
 
@@ -158,7 +184,7 @@ A conference object has `id`, `start`, `end` (as the API returns them; an empty 
 
 Meet 403 or 404 answers are tolerated per call (space, conference list, participants, recordings, transcripts, for example a meeting organised by someone else): everything that did arrive is printed, followed by the `meet_api` entry (the first failure), and the exit status is 0. Every other error is a normal error and nothing is printed.
 
-## `gdcli docs get <id> [--tab <id|title>]`
+## `gdcli docs get <id> [--tab <id|title>] [-a, --account EMAIL]`
 
 `<id>` is a document id or any URL containing `/d/<id>` (for example `https://docs.google.com/document/d/<id>/edit?tab=t.0`; the `tab=` of a pasted URL is ignored, use `--tab`). There is no `--json`: the document is exported as Markdown by Google itself, which is the official Markdown API, so no conversion is implemented.
 
@@ -170,7 +196,7 @@ Meet 403 or 404 answers are tolerated per call (space, conference list, particip
   4. Observed facts (live check with a real account, 2026-11-18): the 307 target is `https://doc-xx-xx-docstext.googleusercontent.com/export/...?format=md&tab=...&dat=...` (host class `*.googleusercontent.com`); the final answer is `200` with `Content-Type: text/x-markdown; charset=utf-8` (not `text/markdown`; the body is valid Markdown) and a `Content-Disposition` header that carries the document title, which gdcli ignores. Per-tab Markdown differs from the whole-document export only in formatting: headings carry no `{#id}` anchors, internal links are tab-qualified (`(?tab=t.xxx#heading=h.xxx)`) instead of `(#MM:SS)`, and checkbox lists are loose (blank lines between items); the content is otherwise identical. Neither export ends with a newline. The whole-document export is the concatenation of the tab exports with nothing between them.
   5. `--tab` must not be blank: clap rejects it with `invalid tab: it must not be blank` (exit status 2) before any request.
 
-## `gdcli docs metadata <id> [--json]`
+## `gdcli docs metadata <id> [--json] [-a, --account EMAIL]`
 
 Only the metadata of a Google Doc. Two calls run concurrently: Drive `files.get` (`supportsAllDrives=true`, `fields=id,name,mimeType,createdTime,modifiedTime,version,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),shared,trashed,starred,viewedByMeTime,modifiedByMeTime,parents,description`) and the Docs API tab list of `docs get --tab`. The file must be a Google Doc (`mimeType` `application/vnd.google-apps.document`), else `not a google doc (mimeType <x>)`. Record, in this order (keys absent when empty; times as Drive returns them):
 

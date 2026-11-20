@@ -371,6 +371,7 @@ async fn run(harness: &Harness, past: u16, upcoming: u16, json: bool) -> String 
         past,
         upcoming,
         json,
+        ..common::args()
     };
     let mut out = Vec::new();
     calendar::list(&harness.api, now(), &args, &mut out)
@@ -499,6 +500,7 @@ async fn calendar_upcoming_pages_never_exceed_250_events() {
             past: 0,
             upcoming: requested,
             json: false,
+            ..common::args()
         };
         calendar::list(&harness.api, now(), &args, &mut Vec::new())
             .await

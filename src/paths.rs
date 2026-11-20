@@ -1,10 +1,13 @@
+use crate::auth::accounts::Email;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 const APP_DIR: &str = "gdcli";
 const CLIENT_SECRET_FILE: &str = "client_secret.json";
-const TOKEN_FILE: &str = "token.json";
+const ACCOUNTS_DIR: &str = "accounts";
+const DEFAULT_FILE: &str = "default";
+const LEGACY_TOKEN_FILE: &str = "token.json";
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -57,7 +60,19 @@ impl Paths {
         self.config.join(CLIENT_SECRET_FILE)
     }
 
-    pub fn token(&self) -> PathBuf {
-        self.data.join(TOKEN_FILE)
+    pub fn accounts(&self) -> PathBuf {
+        self.data.join(ACCOUNTS_DIR)
+    }
+
+    pub fn account(&self, email: &Email) -> PathBuf {
+        self.accounts().join(format!("{email}.json"))
+    }
+
+    pub fn default_account(&self) -> PathBuf {
+        self.data.join(DEFAULT_FILE)
+    }
+
+    pub fn legacy_token(&self) -> PathBuf {
+        self.data.join(LEGACY_TOKEN_FILE)
     }
 }

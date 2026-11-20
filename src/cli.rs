@@ -1,3 +1,4 @@
+use crate::auth::accounts::Email;
 use clap::{Args, Parser, Subcommand};
 
 fn event_id(value: &str) -> Result<String, String> {
@@ -31,10 +32,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    #[command(about = "Show setup instructions, install the OAuth client secret, then log in")]
-    Setup,
-    #[command(about = "Run the OAuth login flow")]
-    Login,
+    #[command(
+        subcommand,
+        about = "Accounts: set up the OAuth client, log in, list accounts, choose the default"
+    )]
+    Auth(AuthCommand),
     #[command(subcommand, about = "Google Meet meetings")]
     Meet(MeetCommand),
     #[command(subcommand, about = "Google Calendar events")]
@@ -45,6 +47,17 @@ pub enum Command {
     Update,
 }
 
+#[derive(Debug, Clone, Default, Args)]
+pub struct AccountArg {
+    #[arg(
+        short = 'a',
+        long,
+        value_name = "EMAIL",
+        help = "Google account (email) to use instead of the default"
+    )]
+    pub account: Option<Email>,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct ListArgs {
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(0..=1000), help = "How many past items to fetch (0 skips them)")]
@@ -53,6 +66,8 @@ pub struct ListArgs {
     pub upcoming: u16,
     #[arg(long, help = "Print JSON instead of text")]
     pub json: bool,
+    #[command(flatten)]
+    pub account: AccountArg,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -61,6 +76,25 @@ pub struct GetArgs {
     pub id: String,
     #[arg(long, help = "Print JSON instead of text")]
     pub json: bool,
+    #[command(flatten)]
+    pub account: AccountArg,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    #[command(about = "Show setup instructions, install the OAuth client secret, then log in")]
+    Setup,
+    #[command(
+        about = "Log in a Google account (the first one becomes the default; a known one is refreshed)"
+    )]
+    Login,
+    #[command(about = "List the logged-in accounts and mark the default")]
+    List,
+    #[command(about = "Make an account the default")]
+    SetDefault {
+        #[arg(help = "Email address of a logged-in account")]
+        email: Email,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -89,6 +123,8 @@ pub enum DocsCommand {
         id: String,
         #[arg(long, value_parser = tab_name, help = "Only this tab, given by tab id (t.abc) or tab title")]
         tab: Option<String>,
+        #[command(flatten)]
+        account: AccountArg,
     },
     #[command(about = "Show the metadata of a Google Doc (title, times, owners, tabs, ...)")]
     Metadata {
@@ -96,5 +132,7 @@ pub enum DocsCommand {
         id: String,
         #[arg(long, help = "Print JSON instead of text")]
         json: bool,
+        #[command(flatten)]
+        account: AccountArg,
     },
 }

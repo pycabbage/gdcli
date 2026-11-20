@@ -4,7 +4,7 @@ use gdcli::docs::document_id;
 use gdcli::events::{meeting_code, render_time, stamp, stamp_millis};
 use gdcli::output::{compact, record, table};
 use gdcli::update::{asset, bearer, github, github_token, version};
-use gdcli::{Command, Paths, deadline_for};
+use gdcli::{AuthCommand, Command, Paths, deadline_for};
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::{Error, ErrorKind};
@@ -212,7 +212,19 @@ fn paths_join_the_fixed_file_names() {
         paths.client_secret(),
         std::path::Path::new("/c/gdcli/client_secret.json")
     );
-    assert_eq!(paths.token(), std::path::Path::new("/d/gdcli/token.json"));
+    assert_eq!(
+        paths.legacy_token(),
+        std::path::Path::new("/d/gdcli/token.json")
+    );
+    assert_eq!(paths.accounts(), std::path::Path::new("/d/gdcli/accounts"));
+    assert_eq!(
+        paths.default_account(),
+        std::path::Path::new("/d/gdcli/default")
+    );
+    assert_eq!(
+        paths.account(&"A@B.c".parse().unwrap()),
+        std::path::Path::new("/d/gdcli/accounts/a@b.c.json")
+    );
     assert_eq!(paths.config, std::path::Path::new("/c/gdcli"));
     assert_eq!(paths.data, std::path::Path::new("/d/gdcli"));
 }
@@ -256,7 +268,7 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
             .unwrap()
             .command
     };
-    for args in [&["setup"][..], &["login"]] {
+    for args in [&["auth", "setup"][..], &["auth", "login"]] {
         assert_eq!(deadline_for(&parse(args)), None, "{args:?}");
     }
     for args in [
@@ -265,6 +277,8 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
         &["meet", "list"],
         &["meet", "get", "e"],
         &["docs", "get", "d"],
+        &["auth", "list"],
+        &["auth", "set-default", "a@b.c"],
         &["update"],
     ] {
         assert_eq!(
@@ -273,7 +287,38 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
             "{args:?}"
         );
     }
-    assert!(matches!(parse(&["login"]), Command::Login));
+    assert!(matches!(
+        parse(&["auth", "login"]),
+        Command::Auth(AuthCommand::Login)
+    ));
+}
+
+#[tokio::test]
+async fn google_commands_report_the_path_error() {
+    use clap::Parser;
+    for args in [
+        &["calendar", "list"][..],
+        &["calendar", "get", "e"],
+        &["meet", "list"],
+        &["meet", "get", "e"],
+        &["docs", "get", "X"],
+        &["docs", "metadata", "X"],
+        &["auth", "setup"],
+        &["auth", "login"],
+        &["auth", "list"],
+        &["auth", "set-default", "a@b.c"],
+    ] {
+        let cli = gdcli::Cli::try_parse_from(std::iter::once("gdcli").chain(args.iter().copied()))
+            .unwrap();
+        let error = gdcli::run_with(cli, &|| anyhow::bail!("cannot resolve XDG config home: x"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            gdcli::message(&error),
+            "cannot resolve XDG config home: x",
+            "{args:?}"
+        );
+    }
 }
 
 #[test]

@@ -99,3 +99,16 @@ Before: `src/` 1579, `tests/` 4094 (non-blank, after `cargo fmt`). After: `src/`
 | 45 | `send` returns whether the credential was still attached on the final answer; the 401 and rate-limit wording follows that bit and the credential is dropped for the rest of the chain after the first foreign hop | not measured separately (inside the +12) | kept |
 | 46 | `github_token` reads a non-unicode value lossily instead of dropping it | 0 lines | kept: a broken value is rejected by GitHub instead of silently falling back to anonymous |
 
+## Wave 7: accounts and the `auth` group (v0.4.0, work package 1)
+
+Before: `src/` 1591, `tests/` 4160 (non-blank, after `cargo fmt`). After: `src/` 1899 (+308), `tests/` 5237 (+1,077: `tests/accounts.rs` 31 tests, 733 lines; 9 more tests in `binary`, `cli` and `units`; the hermetic `env_clear()` helpers of `binary.rs` and `auth.rs`). Per file (`src/`, before to after): `auth/accounts.rs` 0 to 203, `cli.rs` 90 to 126 (+36: `AccountArg`, `AuthCommand`, four flattened options), `auth/mod.rs` 9 to 40 (+31: `auth list`, `auth set-default`, the login rendering), `paths.rs` 54 to 66, `lib.rs` 66 to 76 (+10: lazy path resolution), `token.rs` 81 to 90, `google.rs` 210 to 217. The first estimate was +250 for `src/`; it was made before `rustfmt` expanded the closures and error arms.
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 47 | one validated `Email` newtype (a shape check of about 6 lines) instead of a regex or an email crate | no dependency added, 121 packages | kept |
+| 48 | one `absent()` helper builds the `no account`, `unknown account`, `default account has no token` and `no default account` errors for `token_file`, `set_default` and `default_account` | not measured separately | kept |
+| 49 | `read_dir` NotFound handled by one `match` arm that falls through to `with_context` | src 214 to 212 (-2, measured) | kept |
+| 50 | the rendering of `auth login` (`render`) moved from `accounts.rs` to `auth/mod.rs` next to `auth list` and `auth set-default` | src 336 to 333 over the three files (-3, measured) | kept |
+| 51 | path resolution through a `resolve` function so that `update` never needs `HOME` | not measured separately (inside the +10 of `lib.rs`) | kept |
+| 52 | `auth login` reads the client secret before it creates `accounts/` (review fix) | src 0 (two lines swapped) | kept: a failing login creates nothing |
+

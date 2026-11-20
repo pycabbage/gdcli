@@ -1,3 +1,4 @@
+use crate::auth::accounts::{self, Email};
 use crate::auth::{self, SCOPES};
 use crate::paths::Paths;
 use anyhow::{Context, Result, anyhow};
@@ -80,10 +81,17 @@ impl Google {
         }
     }
 
-    pub async fn connect(paths: &Paths) -> Result<Self> {
+    pub fn production(client: Client<Https, String>, auth: Authenticator<Https>) -> Self {
+        Self::new(client, auth, ROOTS, googleusercontent)
+    }
+
+    pub async fn connect(paths: &Paths, account: Option<&Email>) -> Result<Self> {
+        let secret = auth::secret(paths).await?;
+        accounts::migrate(paths).await?;
+        let (email, file) = accounts::token_file(paths, account)?;
         let client = https_builder().build(connector());
-        let auth = auth::authenticator(paths, false, client.clone()).await?;
-        Ok(Self::new(client, auth, ROOTS, googleusercontent))
+        let auth = auth::authenticator(secret, &file, Some(&email), false, client.clone()).await?;
+        Ok(Self::production(client, auth))
     }
 
     fn url(root: &str, segments: &[&str], query: &[(&str, &str)]) -> Result<Url> {
