@@ -38,7 +38,7 @@ A Meet answer 403 or 404 for one part (for example a meeting organised by someon
 
 `gdcli meet notes <ID> [--tab TAB] [-a, --account EMAIL]`
 
-Prints the Gemini notes document of the meeting as Markdown (Meet `smartNotes`, state `FILE_GENERATED`; no `--json`). The document has one or two tabs, depending on the notes version and settings; tab titles are localized (in an English interface Google names them `Quick notes` and `Full notes`, but do not rely on it). Without `--tab` the whole export contains every tab (it is not the byte concatenation of the per-tab exports). List the tabs with `gdcli docs metadata <document_id>` and pass a tab id (`t.abc`) or a title to `--tab` (same bytes). One document: its Markdown only, the bytes of `docs get <document_id>`. Several documents (notes sessions of a restarted meeting): oldest first, each after a `document: id=... start=... end=...` line and followed by a blank line, so the output is then not pure Markdown. Nothing is printed when a request fails.
+Prints the Gemini notes document of the meeting as Markdown (Meet `smartNotes`, state `FILE_GENERATED`; no `--json`). The document has the notes tab and, when the meeting was transcribed into the same document, a second tab with the transcript (one or two tabs); tab titles are localized, so do not rely on them. Without `--tab` the whole export contains every tab (it is not the byte concatenation of the per-tab exports). List the tabs with `gdcli docs metadata <document_id>` and pass a tab id (`t.abc`) or a title to `--tab` (same bytes). One document: its Markdown only, the bytes of `docs get <document_id>`. Several documents (notes sessions of a restarted meeting): oldest first, each after a `document: id=... start=... end=...` line and followed by a blank line, so the output is then not pure Markdown. Nothing is printed when a request fails.
 
 Errors (exit 1, empty stdout):
 
@@ -54,7 +54,7 @@ Errors (exit 1, empty stdout):
 
 `gdcli meet transcript <ID> [--tab TAB] [-a, --account EMAIL]`
 
-Same as `meet notes` for the transcript document (Meet `transcripts`; a transcript is a separate document, not a tab).
+Same as `meet notes` for the transcript document (Meet `transcripts`). When the `document_id` of the `transcript:` line equals that of the `smart_note:` line, the transcript is a tab of the notes document: without `--tab` `meet transcript` prints the whole document, the same bytes as `meet notes`; list the tabs with `gdcli docs metadata <document_id>` and pass the transcript tab id or title to `--tab` to get only the transcript. When the ids differ, the transcript is a separate document; without any transcript there is no `transcript:` line and `meet transcript` fails with `no transcript for event <id>`.
 
 Errors (as for `meet notes`, with `transcript` in place of `gemini notes document`):
 
