@@ -28,7 +28,7 @@ Runs the OAuth login flow. Prints the authorization URL, then `logged in; token 
 
 ## `gdcli update`
 
-Replaces the running executable with the latest GitHub release of `pycabbage/gdcli` (design, security level and bounds: `update.md`). No arguments and no options (`update --json` and `update x` are usage errors, exit status 2; there is no `--json` because the output is three labeled lines and `--json` is listed only for the commands above). It needs no Google credentials and never reads or writes the config or data directories.
+Replaces the running executable with the latest GitHub release of `pycabbage/gdcli` (design, security level and bounds: `update.md`). No arguments and no options (`update --json` and `update x` are usage errors, exit status 2; there is no `--json` because the output is three labeled lines and `--json` is listed only for the commands above). It needs no Google credentials and never reads or writes the config or data directories. The optional environment variable `GITHUB_TOKEN` (non-empty) is sent as `Authorization: Bearer <token>` on the request for the latest release only (never on the download), which raises the GitHub rate limit from 60 requests per hour per IP to 5,000 per hour per user; `GH_TOKEN`, a flag or a file are not supported (rules and reasons: `update.md`).
 
 Output on stdout, exit status 0, rendered by `output::record` (keys always `status`, `current`, `latest`):
 
@@ -52,9 +52,12 @@ latest: 0.2.0
 |---|---|
 | DNS, connect, TLS or transport failure | `error: request failed: <error chain>` |
 | 120 s deadline | `error: timed out after 120s` |
-| 403 or 429 with `x-ratelimit-remaining: 0` | `error: github api rate limit exceeded; resets at 2026-11-19T01:36:49Z` (from `x-ratelimit-reset`; without a usable reset header just `github api rate limit exceeded`) |
+| 403 or 429 with `x-ratelimit-remaining: 0`, no token sent | `error: github api rate limit exceeded; resets at 2026-11-19T01:36:49Z; set GITHUB_TOKEN to raise the limit of 60 requests per hour` (from `x-ratelimit-reset`; without a usable reset header the `; resets at ...` part is absent) |
+| the same with a token sent | `error: github api rate limit of the GITHUB_TOKEN exceeded; resets at 2026-11-19T01:36:49Z` (without a usable reset header the `; resets at ...` part is absent) |
+| `GITHUB_TOKEN` is not a valid HTTP header value (before any request) | `error: GITHUB_TOKEN is not a valid HTTP header value` |
+| 401 on the latest-release request when the token was sent with it | `error: github rejected GITHUB_TOKEN (401): unset it or provide a valid token` |
 | 404 on the latest-release URL (no published release) | `error: github has no published release for pycabbage/gdcli` |
-| any other non-2xx status, including a 3xx without a usable `Location`, on any URL | `error: github api error <status>` with the status as `http::StatusCode` prints it, for example `github api error 404 Not Found` |
+| any other non-2xx status, including a 3xx without a usable `Location` and a 401 on any request that carried no token (none configured, the redirect chain left the API host, or the archive download), on any URL | `error: github api error <status>` with the status as `http::StatusCode` prints it, for example `github api error 404 Not Found` |
 | the API body is not JSON | `error: unexpected github api response: <parse error>` |
 | tag missing or not `v<major>.<minor>.<patch>` | `error: latest release tag "x" is not v<major>.<minor>.<patch>` |
 | tag with a prerelease part | `error: latest release v1.0.0-rc.1 is a prerelease and is not installed` |

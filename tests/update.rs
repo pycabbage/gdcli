@@ -19,6 +19,7 @@ const LIMIT: u64 = 1 << 20;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const NO_PUBLISHED_RELEASE: &str = "github has no published release for pycabbage/gdcli";
 const BINARY: &str = "gdcli";
+const TOKEN: &str = "ghp_testtoken";
 
 fn local(url: &Url) -> bool {
     github(url) || url.host_str() == Some("127.0.0.1")
@@ -76,6 +77,10 @@ fn asset_name() -> String {
 
 fn message(result: anyhow::Result<()>) -> String {
     format!("{:#}", result.unwrap_err())
+}
+
+fn hidden(text: &str) {
+    assert!(!text.contains(TOKEN), "{text}");
 }
 
 struct Fixture {
@@ -162,6 +167,7 @@ impl Fixture {
     async fn run_at(
         &self,
         api: &str,
+        token: Option<&str>,
         limit: u64,
         replace: fn(&Path) -> io::Result<()>,
     ) -> (anyhow::Result<()>, String) {
@@ -171,8 +177,18 @@ impl Fixture {
             limit,
         };
         let mut out = Vec::new();
-        let result = run_with(&self.fetcher, api, &install, &mut out).await;
+        let result = run_with(&self.fetcher, api, token, &install, &mut out).await;
         (result, String::from_utf8(out).unwrap())
+    }
+
+    async fn run_as(
+        &self,
+        token: Option<&str>,
+        limit: u64,
+        replace: fn(&Path) -> io::Result<()>,
+    ) -> (anyhow::Result<()>, String) {
+        self.run_at(&self.url("/latest"), token, limit, replace)
+            .await
     }
 
     async fn run(
@@ -180,7 +196,7 @@ impl Fixture {
         limit: u64,
         replace: fn(&Path) -> io::Result<()>,
     ) -> (anyhow::Result<()>, String) {
-        self.run_at(&self.url("/latest"), limit, replace).await
+        self.run_as(None, limit, replace).await
     }
 
     fn files(&self) -> Vec<String> {
@@ -306,26 +322,45 @@ async fn a_digest_mismatch_fails_before_the_archive_is_opened_and_leaves_the_dir
 }
 
 #[tokio::test]
-async fn a_rate_limited_answer_names_the_limit_and_the_reset_time_when_present() {
+async fn a_rate_limited_answer_names_the_limit_the_reset_time_and_the_token_state() {
     let reset = ("x-ratelimit-reset", "1795052209");
     let limited = ("x-ratelimit-remaining", "0");
-    for (status, headers, expected) in [
+    let anonymous = "github api rate limit exceeded";
+    let raise = "set GITHUB_TOKEN to raise the limit of 60 requests per hour";
+    let authenticated = "github api rate limit of the GITHUB_TOKEN exceeded";
+    for (status, headers, token, expected) in [
         (
             403,
             vec![limited, reset],
-            "github api rate limit exceeded; resets at 2026-11-19T01:36:49Z",
+            None,
+            format!("{anonymous}; resets at 2026-11-19T01:36:49Z; {raise}"),
         ),
         (
             429,
             vec![limited, reset],
-            "github api rate limit exceeded; resets at 2026-11-19T01:36:49Z",
+            None,
+            format!("{anonymous}; resets at 2026-11-19T01:36:49Z; {raise}"),
         ),
-        (403, vec![limited], "github api rate limit exceeded"),
+        (403, vec![limited], None, format!("{anonymous}; {raise}")),
         (
             403,
             vec![limited, ("x-ratelimit-reset", "soon")],
-            "github api rate limit exceeded",
+            None,
+            format!("{anonymous}; {raise}"),
         ),
+        (
+            403,
+            vec![limited, reset],
+            Some(TOKEN),
+            format!("{authenticated}; resets at 2026-11-19T01:36:49Z"),
+        ),
+        (
+            429,
+            vec![limited, reset],
+            Some(TOKEN),
+            format!("{authenticated}; resets at 2026-11-19T01:36:49Z"),
+        ),
+        (403, vec![limited], Some(TOKEN), authenticated.to_owned()),
     ] {
         let fixture = Fixture::new().await;
         let mut template = ResponseTemplate::new(status);
@@ -333,8 +368,10 @@ async fn a_rate_limited_answer_names_the_limit_and_the_reset_time_when_present()
             template = template.insert_header(name, value);
         }
         fixture.mount("/latest", template).await;
-        let (result, out) = fixture.run(LIMIT, keep).await;
-        assert_eq!(message(result), expected);
+        let (result, out) = fixture.run_as(token, LIMIT, keep).await;
+        let error = message(result);
+        assert_eq!(error, expected);
+        hidden(&error);
         assert_eq!(out, "");
     }
 }
@@ -363,6 +400,10 @@ async fn statuses_map_to_specific_errors() {
     for (template, expected) in [
         (ResponseTemplate::new(404), "github api error 404 Not Found"),
         (ResponseTemplate::new(302), "github api error 302 Found"),
+        (
+            ResponseTemplate::new(401),
+            "github api error 401 Unauthorized",
+        ),
     ] {
         let fixture = Fixture::new().await;
         fixture.latest(fixture.release("v9.9.9", "00")).await;
@@ -470,7 +511,7 @@ async fn more_than_three_redirects_are_refused() {
 async fn an_unreachable_api_is_reported_as_a_request_failure() {
     let fixture = Fixture::new().await;
     let (result, out) = fixture
-        .run_at("http://127.0.0.1:1/latest", LIMIT, keep)
+        .run_at("http://127.0.0.1:1/latest", None, LIMIT, keep)
         .await;
     let error = message(result);
     assert!(error.starts_with("request failed"), "{error}");
@@ -651,4 +692,197 @@ async fn a_body_that_breaks_midway_is_reported_as_a_download_failure() {
     let error = message(result);
     assert!(error.starts_with("download failed: "), "{error}");
     assert_eq!(fixture.files(), nothing());
+}
+
+async fn authorization_of(server: &MockServer) -> Vec<(String, Option<String>)> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| {
+            (
+                request.url.path().to_owned(),
+                request
+                    .headers
+                    .get("authorization")
+                    .map(|value| value.to_str().unwrap().to_owned()),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_token_is_sent_to_the_api_request_only() {
+    let fixture = Fixture::serving(&regular(&[(BINARY, b"new binary")])).await;
+    let (result, out) = fixture.run_as(Some(TOKEN), LIMIT, keep).await;
+    result.unwrap();
+    hidden(&out);
+    assert_eq!(fixture.installed(), b"new binary");
+    assert_eq!(
+        authorization_of(&fixture.server).await,
+        [
+            ("/latest".to_owned(), Some(format!("Bearer {TOKEN}"))),
+            ("/asset".to_owned(), None),
+        ]
+    );
+    for request in fixture.server.received_requests().await.unwrap() {
+        assert_eq!(
+            request.headers.get("user-agent").unwrap(),
+            format!("gdcli/{CURRENT}").as_str()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_redirect_of_the_api_request_to_another_authority_drops_the_token() {
+    let other = MockServer::start().await;
+    let fixture = Fixture::new().await;
+    let target = format!("{}/elsewhere", other.uri());
+    fixture
+        .mount(
+            "/latest",
+            ResponseTemplate::new(302).insert_header("location", target.as_str()),
+        )
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/elsewhere"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture.release("v0.0.1", "00")))
+        .mount(&other)
+        .await;
+    let (result, out) = fixture.run_as(Some(TOKEN), LIMIT, keep).await;
+    result.unwrap();
+    assert!(out.starts_with("status: up_to_date"), "{out}");
+    assert_eq!(
+        authorization_of(&fixture.server).await,
+        [("/latest".to_owned(), Some(format!("Bearer {TOKEN}")))]
+    );
+    assert_eq!(
+        authorization_of(&other).await,
+        [("/elsewhere".to_owned(), None)]
+    );
+}
+
+#[tokio::test]
+async fn a_redirect_of_the_api_request_within_the_same_authority_keeps_the_token() {
+    let fixture = Fixture::new().await;
+    fixture
+        .mount(
+            "/latest",
+            ResponseTemplate::new(302).insert_header("location", "/moved"),
+        )
+        .await;
+    fixture
+        .mount(
+            "/moved",
+            ResponseTemplate::new(200).set_body_json(fixture.release("v0.0.1", "00")),
+        )
+        .await;
+    let (result, out) = fixture.run_as(Some(TOKEN), LIMIT, keep).await;
+    result.unwrap();
+    assert!(out.starts_with("status: up_to_date"), "{out}");
+    let bearer = Some(format!("Bearer {TOKEN}"));
+    assert_eq!(
+        authorization_of(&fixture.server).await,
+        [
+            ("/latest".to_owned(), bearer.clone()),
+            ("/moved".to_owned(), bearer),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_token_that_is_not_a_valid_header_value_is_refused_before_any_request() {
+    let bad = format!("{TOKEN}\nsecond line");
+    let fixture = Fixture::serving(&regular(&[(BINARY, b"x")])).await;
+    let (result, out) = fixture.run_as(Some(&bad), LIMIT, keep).await;
+    let error = message(result);
+    assert_eq!(error, "GITHUB_TOKEN is not a valid HTTP header value");
+    hidden(&error);
+    assert_eq!(out, "");
+    assert_eq!(fixture.paths().await, nothing());
+    assert_eq!(fixture.files(), nothing());
+}
+
+#[tokio::test]
+async fn a_401_answer_names_the_token_variable_without_echoing_the_token() {
+    for (token, expected) in [
+        (
+            Some(TOKEN),
+            "github rejected GITHUB_TOKEN (401): unset it or provide a valid token",
+        ),
+        (None, "github api error 401 Unauthorized"),
+    ] {
+        let fixture = Fixture::new().await;
+        fixture.mount("/latest", ResponseTemplate::new(401)).await;
+        let (result, out) = fixture.run_as(token, LIMIT, keep).await;
+        let error = message(result);
+        assert_eq!(error, expected);
+        hidden(&error);
+        assert_eq!(out, "");
+        assert_eq!(fixture.paths().await, ["/latest"]);
+    }
+}
+
+#[tokio::test]
+async fn a_401_from_another_authority_after_a_redirect_does_not_blame_the_token() {
+    let other = MockServer::start().await;
+    let fixture = Fixture::new().await;
+    let target = format!("{}/elsewhere", other.uri());
+    fixture
+        .mount(
+            "/latest",
+            ResponseTemplate::new(302).insert_header("location", target.as_str()),
+        )
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/elsewhere"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&other)
+        .await;
+    let (result, out) = fixture.run_as(Some(TOKEN), LIMIT, keep).await;
+    let error = message(result);
+    assert_eq!(error, "github api error 401 Unauthorized");
+    hidden(&error);
+    assert_eq!(out, "");
+    assert_eq!(
+        authorization_of(&other).await,
+        [("/elsewhere".to_owned(), None)]
+    );
+}
+
+#[tokio::test]
+async fn a_hop_back_to_the_api_origin_does_not_bring_the_token_back() {
+    let other = MockServer::start().await;
+    let fixture = Fixture::new().await;
+    let away = format!("{}/hop", other.uri());
+    fixture
+        .mount(
+            "/latest",
+            ResponseTemplate::new(302).insert_header("location", away.as_str()),
+        )
+        .await;
+    let back = fixture.url("/final");
+    Mock::given(method("GET"))
+        .and(path("/hop"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", back.as_str()))
+        .mount(&other)
+        .await;
+    fixture
+        .mount(
+            "/final",
+            ResponseTemplate::new(200).set_body_json(fixture.release("v0.0.1", "00")),
+        )
+        .await;
+    let (result, out) = fixture.run_as(Some(TOKEN), LIMIT, keep).await;
+    result.unwrap();
+    assert!(out.starts_with("status: up_to_date"), "{out}");
+    assert_eq!(
+        authorization_of(&fixture.server).await,
+        [
+            ("/latest".to_owned(), Some(format!("Bearer {TOKEN}"))),
+            ("/final".to_owned(), None),
+        ]
+    );
+    assert_eq!(authorization_of(&other).await, [("/hop".to_owned(), None)]);
 }

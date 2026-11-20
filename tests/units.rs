@@ -3,10 +3,12 @@ mod common;
 use gdcli::docs::document_id;
 use gdcli::events::{meeting_code, render_time, stamp, stamp_millis};
 use gdcli::output::{compact, record, table};
-use gdcli::update::{asset, github, version};
+use gdcli::update::{asset, bearer, github, github_token, version};
 use gdcli::{Command, Paths, deadline_for};
 use serde_json::{Value, json};
+use std::ffi::OsString;
 use std::io::{Error, ErrorKind};
+use std::os::unix::ffi::OsStringExt;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use url::Url;
@@ -457,4 +459,32 @@ fn an_asset_without_a_download_url_a_sha256_digest_or_an_immutable_release_is_re
     let mut unreported = release(&json!([entry(name)]));
     unreported.as_object_mut().unwrap().remove("immutable");
     assert!(asset(&unreported, "linux_x86_64").is_err());
+}
+
+#[test]
+fn the_github_token_variable_is_ignored_when_unset_or_empty_and_read_lossily_when_not_unicode() {
+    assert_eq!(github_token(None), None);
+    assert_eq!(github_token(Some(OsString::new())), None);
+    assert_eq!(
+        github_token(Some(OsString::from_vec(vec![b'g', 0xff]))),
+        Some("g\u{fffd}".to_owned())
+    );
+    assert_eq!(
+        github_token(Some(OsString::from("ghp_testtoken"))),
+        Some("ghp_testtoken".to_owned())
+    );
+}
+
+#[test]
+fn the_bearer_header_is_sensitive_and_a_bad_token_is_refused_without_echoing_it() {
+    let value = bearer("ghp_testtoken").unwrap();
+    assert_eq!(value, "Bearer ghp_testtoken");
+    assert!(value.is_sensitive());
+    assert!(bearer("g\u{fffd}").is_ok());
+    assert_eq!(format!("{value:?}"), "Sensitive");
+    for bad in ["ghp_secret\nsecond", "ghp_secret\r", "ghp_secret\u{7f}"] {
+        let error = format!("{:#}", bearer(bad).unwrap_err());
+        assert_eq!(error, "GITHUB_TOKEN is not a valid HTTP header value");
+        assert!(!error.contains("ghp_secret"), "{error}");
+    }
 }

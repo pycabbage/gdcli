@@ -51,7 +51,7 @@
 - The name template maps GoReleaser's `amd64`/`arm64` to `x86_64`/`aarch64` to match `uname -m`.
 - GoReleaser also creates the GitHub Release with an auto-generated changelog.
 - `releases/latest/download/<asset>` resolves once the release is published and not a draft or pre-release. `.goreleaser.yaml` sets `prerelease: auto` under `release:`, so a tag with a semver prerelease suffix such as `v1.0.0-rc1` is published as a GitHub prerelease and is neither `releases/latest` nor the target of `releases/latest/download`; every other published `v*` release becomes the latest one (`make_latest` stays at its default). Evidence (GoReleaser v2.20.2): `internal/pipe/release/release.go` lines 75-84 (`case "auto": if ctx.Semver.Prerelease != "" { ctx.PreRelease = true }`), `internal/client/github.go` line 544 (the `prerelease` and `make_latest` fields of the release request), and a run of GoReleaser against a mock GitHub API (scratch, not in the repository): tag `v1.0.0-rc1` sent `POST releases` with `draft: true, prerelease: true` and then `PATCH` with `draft: false, prerelease: true, make_latest: "false"`; tag `v1.0.0` sent `prerelease: false`. `goreleaser check` accepts the key. No prerelease tag has been published (an immutable tag cannot be reused), so the first real one is the live test; `v0.2.0` is the first release published with the key in place and is correctly a normal release (`isPrerelease: false`, and `releases/latest/download` resolves to it). `gdcli update` also refuses a prerelease tag by itself.
-- `gdcli update` (see `update.md`) reads these assets from the API: the asset names above, the entry `gdcli` at the root of the archive, a `sha256:` digest on every asset and `immutable: true` on the release. A change of any of them (archive layout, names, immutability) breaks self-update and must be accompanied by a change of `src/update.rs`.
+- `gdcli update` (see `update.md`) reads these assets from the API: the asset names above, the entry `gdcli` at the root of the archive, a `sha256:` digest on every asset and `immutable: true` on the release. A change of any of them (archive layout, names, immutability) breaks self-update and must be accompanied by a change of `src/update/`.
 - GitHub picks `releases/latest` by the creation time of the release (`created_at`), not by semver. Publish versions in increasing order; a backport published after a newer release becomes "latest" and `gdcli update` then reports `up_to_date` for users who already run the newer version.
 
 ## Attestations
@@ -162,7 +162,7 @@ Verification checklist, in a clean directory (`cd "$(mktemp -d)"`), with `vX.Y.Z
 5. Release attestation, meaningful when the release is immutable: `gh release verify vX.Y.Z --repo pycabbage/gdcli` and `gh release verify-asset vX.Y.Z gdcli_linux_$(uname -m).tar.gz --repo pycabbage/gdcli`.
 6. Binary: `tar -xzf gdcli_linux_$(uname -m).tar.gz && ./gdcli --version && ./gdcli --help`. The version must print `X.Y.Z`; the archive must contain only `gdcli` at its root (`tar -tzf`).
 7. README install path in a clean home: `HOME="$(mktemp -d)" bash -c 'curl -fsSL -o gdcli.tar.gz https://github.com/pycabbage/gdcli/releases/latest/download/gdcli_linux_$(uname -m).tar.gz && mkdir -p ~/.local/bin && tar -xzf gdcli.tar.gz -C ~/.local/bin gdcli && ~/.local/bin/gdcli --version'` (the README's first two lines, plus a version check instead of the interactive `gdcli setup`). This also proves that `releases/latest/download` resolves to the new release.
-8. Self-update against the real release (needs `gh` and a Rust toolchain; run as a normal user, with `REPO` set to the checkout to test and, optionally, `CARGO_TARGET_DIR` to keep the build cache between runs; the script creates its own scratch directory `$root` with `mktemp -d`, works only below `$root` (and the optional target directory), deletes `$root` at the end only after checking that it owns it, never touches the repository, `~/.local/bin` (it is only hashed before and after) or Google credentials, and runs `gdcli` with `HOME` and the XDG variables pointing into `$root`; if `/tmp` is mounted `noexec`, set `TMPDIR` to a directory that allows executing files): the script below builds three scratch copies of the current tree with the versions 0.0.1, the latest released version and 9.0.0, installs the 0.0.1 build, runs `update` and checks the printed lines, `--version`, the API digest against the sha256 of the asset and of the installed file, the mode and owner, the leftovers, an equal version, a newer-than-release version, an install through a symlink, a 0700 file, a read-only directory and that nothing else was written. Before a release that contains `update` the installed release has no `update` command, so the second run is skipped; after the release the script also runs the installed release binary's own `update` and expects `status: up_to_date`. On failure `$root` is kept (its permissions restored) and printed at the start for inspection.
+8. Self-update against the real release (needs `gh` and a Rust toolchain; run as a normal user, with `REPO` set to the checkout to test and, optionally, `CARGO_TARGET_DIR` to keep the build cache between runs; the script creates its own scratch directory `$root` with `mktemp -d`, works only below `$root` (and the optional target directory), deletes `$root` at the end only after checking that it owns it, never touches the repository, `~/.local/bin` (it is only hashed before and after) or Google credentials, and runs `gdcli` with `HOME` and the XDG variables pointing into `$root`; if `/tmp` is mounted `noexec`, set `TMPDIR` to a directory that allows executing files): the script below builds three scratch copies of the current tree with the versions 0.0.1, the latest released version and 9.0.0, installs the 0.0.1 build, runs `update` and checks the printed lines, `--version`, the API digest against the sha256 of the asset and of the installed file, the mode and owner, the leftovers, an equal version, a newer-than-release version, an install through a symlink, a 0700 file, a read-only directory, the rejection of an invalid `GITHUB_TOKEN` (the variable is read and sent to `api.github.com`: GitHub answers 401 and the exact message `github rejected GITHUB_TOKEN (401): unset it or provide a valid token` is printed with the binary unchanged), an empty `GITHUB_TOKEN` (treated as no token: a normal update) and that nothing else was written. The helper `isolated` removes any `GITHUB_TOKEN` of the caller from the environment of `gdcli`, so an ambient token never changes the other cases. Before a release that contains `update` the installed release has no `update` command, so the second run is skipped; after the release the script also runs the installed release binary's own `update` and expects `status: up_to_date`. On failure `$root` is kept (its permissions restored) and printed at the start for inspection.
 
 ```
 set -eu
@@ -182,7 +182,7 @@ expect() {
     echo "ok: $2"
 }
 isolated() {
-    env HOME="$root/home" XDG_CONFIG_HOME="$root/home/config" XDG_DATA_HOME="$root/home/data" "$@"
+    env -u GITHUB_TOKEN HOME="$root/home" XDG_CONFIG_HOME="$root/home/config" XDG_DATA_HOME="$root/home/data" "$@"
 }
 build() {
     sed -i "0,/^version = \".*\"/s//version = \"$1\"/" "$root/src/Cargo.toml"
@@ -287,6 +287,23 @@ expect "$message" "error: cannot write to $root/readonly: Permission denied (os 
 ensure [ "$before" = "$(sha256sum "$root/readonly/gdcli")" ]; echo "binary unchanged"
 chmod 755 "$root/readonly"
 ensure [ "$(ls -A "$root/readonly")" = gdcli ]; echo "no leftovers: only gdcli"
+
+echo "--- invalid GITHUB_TOKEN is sent to the API and rejected"
+stage badtoken 0.0.1
+before=$(sha256sum "$root/badtoken/gdcli")
+message=$(isolated env GITHUB_TOKEN=gdcli-e2e-invalid-token "$root/badtoken/gdcli" update 2>&1 || true)
+expect "$message" "error: github rejected GITHUB_TOKEN (401): unset it or provide a valid token"
+ensure [ "$before" = "$(sha256sum "$root/badtoken/gdcli")" ]; echo "binary unchanged"
+expect "$("$root/badtoken/gdcli" --version)" "gdcli 0.0.1"
+ensure [ "$(ls -A "$root/badtoken")" = gdcli ]; echo "no leftovers: only gdcli"
+
+echo "--- empty GITHUB_TOKEN means no token"
+stage emptytoken 0.0.1
+out=$(isolated env GITHUB_TOKEN= "$root/emptytoken/gdcli" update)
+echo "$out"
+expect "$out" "status: updated"
+expect "$("$root/emptytoken/gdcli" --version)" "gdcli $version"
+ensure [ "$(ls -A "$root/emptytoken")" = gdcli ]; echo "no leftovers: only gdcli"
 
 echo "--- nothing else touched"
 ensure [ -z "$(ls -A "$root/home")" ]; echo "isolated HOME and XDG directories stayed empty"

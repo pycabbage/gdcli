@@ -75,6 +75,27 @@ Before: `src/` 1324, `tests/` 3173 (non-blank, after `cargo fmt`). After: `src/`
 | 35 | shared `https_host` helper with `google::googleusercontent` | estimated -1 line and an edit of a tested Google path | not done |
 | 36 | the reset time in the rate-limit message (`time` is already a dependency) | not measured separately (about 7 lines) | kept: it tells an agent when to retry |
 | 37 | `self-replace` and `semver` instead of hand-written replace and version compare | not written, estimated 12 and 8 lines | kept |
-| 38 | `--check`, `--json`, token support | not written | not done |
+| 38 | `--check`, `--json` | not written | not done |
 | 39 | review fixes: context on the download write, one neutral extraction message, `Fetcher::archive` public for a test, its `sha256` parameter renamed `want` so the signature and the checksum `ensure!` each fit on one line | `update.rs` 238 to 235 (`wc -l`, measured) | kept |
 | 40 | the staged-file creation in `extract` gets the same `cannot extract the archive` context (`commands.md` promises it for a full disk after the download) | `update.rs` stays at 235 lines (`wc -l`, measured) | kept |
+
+## Wave 5: `GITHUB_TOKEN`
+
+Before: `src/` 1551, `tests/` 3908 (non-blank, after `cargo fmt`). After: `src/` 1579 (+28, all in `update.rs`: 223 to 251 non-blank, `wc -l` 235 to 265), `tests/` 4094 (+186: 5 new tests in `update.rs`, 2 unit tests, the rate-limit test extended).
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 41 | the token as a parameter of `send` and `ok` (no field on `Fetcher`, origin comparison instead of a flag per hop) | not measured separately (inside the +28) | kept |
+| 42 | `github_token` and `bearer` as `pub` helpers, so that the empty, non-unicode, sensitive and invalid cases are unit tests and not tests of the process environment | not measured separately (inside the +28) | kept |
+| 43 | one `reset` string shared by the two rate-limit messages instead of separate `match` arms | not measured separately (inside the +28) | kept |
+
+## Wave 6: review fixes of `GITHUB_TOKEN` and the module split
+
+Before: `src/` 1579, `tests/` 4094 (non-blank, after `cargo fmt`). After: `src/` 1591 (+12), `tests/` 4160 (+66: two new tests in `update.rs`, one more row in the status test, one changed unit test). `src/update.rs` (265 lines, the largest module of the repository) became `src/update/mod.rs` (138 lines, 129 non-blank) and `src/update/fetch.rs` (142 lines, 134 non-blank); the sum is 280 lines because the second file repeats its imports and the parent has `mod` and `pub use` lines.
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 44 | split by responsibility: everything that touches the network or the token in `fetch.rs`, the flow and the pure selection in `mod.rs` | 265 lines in one file to 138 + 142 | kept |
+| 45 | `send` returns whether the credential was still attached on the final answer; the 401 and rate-limit wording follows that bit and the credential is dropped for the rest of the chain after the first foreign hop | not measured separately (inside the +12) | kept |
+| 46 | `github_token` reads a non-unicode value lossily instead of dropping it | 0 lines | kept: a broken value is rejected by GitHub instead of silently falling back to anonymous |
+
