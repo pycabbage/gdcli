@@ -34,7 +34,7 @@ gdcli update             update gdcli from the latest GitHub release
 - Pursue performance above all; optimize memory usage.
 - User-touched config (e.g. client_secret.json) lives in `$XDG_CONFIG_HOME/gdcli/`; program-touched state/cache (e.g. token) lives in `$XDG_DATA_HOME/gdcli/`.
 - No code comments at all, in any file type (including YAML/TOML). Needed information goes in English docs under `<repo_root>/docs/{design,...}`.
-- README.md is for users only, in English: exactly one line describing the project plus one 3-line code block (download from releases, extract into `~/.local/bin`, run `gdcli setup`). No contribution info or any other text.
+- README.md is for users only, in English: exactly one line describing the project plus one 3-line code block (download from releases, extract into `~/.local/bin`, run `gdcli auth setup`). No contribution info or any other text.
 - Comment/README limits are never a reason to drop information from the repo. Keep the repo minimal in bytes yet complete in information (all information in docs/AGENTS.md).
 - Split source into appropriately sized modules/hierarchy.
 - Write as little source as possible. Search exhaustively (dozens of times) for reliable libraries/frameworks; hand-write code only if none exists.
