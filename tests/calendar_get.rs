@@ -1,38 +1,10 @@
 mod common;
 
-use common::{EVENTS_PATH, Harness, assert_same_information, text};
+use common::{
+    EVENTS_PATH, Harness, assert_same_information, calendar_attachments, calendar_event, text,
+};
 use gdcli::calendar;
 use serde_json::{Value, json};
-
-fn event() -> Value {
-    json!({
-        "id": "abc123", "status": "confirmed", "summary": "Planning",
-        "description": "First line\r\nSecond line", "location": "Room 1",
-        "htmlLink": "https://calendar.google.com/event?eid=abc",
-        "hangoutLink": "https://meet.google.com/abc-defg-hij",
-        "eventType": "default", "recurringEventId": "series1",
-        "recurrence": ["RRULE:FREQ=WEEKLY"], "visibility": "public",
-        "created": "2026-11-01T09:00:00.000+09:00", "updated": "2026-11-02T00:00:00.000Z",
-        "start": {"dateTime": "2026-11-20T10:00:00+09:00", "timeZone": "Asia/Tokyo"},
-        "end": {"dateTime": "2026-11-20T11:00:00+09:00"},
-        "organizer": {"email": "boss@example.com", "displayName": "Boss"},
-        "creator": {"email": "boss@example.com"},
-        "attendees": [
-            {"email": "a@example.com", "responseStatus": "accepted"},
-            {"email": "b@example.com", "displayName": "Bee", "responseStatus": "needsAction", "optional": true},
-            {"email": "c@example.com", "responseStatus": "declined", "optional": false}
-        ],
-        "conferenceData": {
-            "conferenceId": "abc-defg-hij",
-            "conferenceSolution": {"key": {"type": "hangoutsMeet"}},
-            "entryPoints": [
-                {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"},
-                {"entryPointType": "phone", "uri": "tel:+1-555"}
-            ]
-        },
-        "etag": "dropped"
-    })
-}
 
 fn record() -> Value {
     json!({
@@ -71,7 +43,7 @@ async fn get(harness: &Harness, id: &str, json: bool) -> String {
 async fn text_and_json_are_two_renderings_of_one_curated_record() {
     let harness = Harness::start().await;
     harness
-        .mount_json(&format!("{EVENTS_PATH}/abc123"), event())
+        .mount_json(&format!("{EVENTS_PATH}/abc123"), calendar_event())
         .await;
     let json = get(&harness, "abc123", true).await;
     assert_eq!(json, format!("{}\n", record()));
@@ -103,19 +75,11 @@ async fn text_and_json_are_two_renderings_of_one_curated_record() {
     );
 }
 
-fn attachments() -> Value {
-    json!([
-        {"fileUrl": "https://docs.google.com/document/d/1AbCdEf/edit", "title": "Notes by Gemini",
-         "mimeType": "application/vnd.google-apps.document", "fileId": "1AbCdEf", "iconLink": "https://x.example/i.png"},
-        {"fileUrl": "https://example.com/a.pdf", "title": "Agenda", "mimeType": "application/pdf"}
-    ])
-}
-
 #[tokio::test]
 async fn attachments_render_in_text_and_json_with_the_exact_mask() {
     let harness = Harness::start().await;
-    let mut full = event();
-    full["attachments"] = attachments();
+    let mut full = calendar_event();
+    full["attachments"] = calendar_attachments();
     harness
         .mount_json(&format!("{EVENTS_PATH}/abc123"), full)
         .await;

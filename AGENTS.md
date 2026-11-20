@@ -17,12 +17,14 @@ gdcli calendar list      latest 10 calendar events (default past 5, future 5; --
 gdcli calendar get <id>  get and show an event with attachments
 gdcli docs get <id>      get a Google Doc as Markdown; --tab <id|name> selects one tab
 gdcli docs metadata <id> metadata of a Google Doc
+gdcli skills [topic]     print the agent skill: SKILL.md, or a reference (full, meet, calendar, docs, auth); embedded from skills/gdcli
 gdcli update             update gdcli from the latest GitHub release
 ```
 
 - `--json` (same information as JSON) exists on meet/calendar list and get and on `docs metadata`, never on `docs get`, `meet notes` or `meet transcript` (Markdown exports).
 - `--account <email>` (`-a`) exists on every command that talks to Google (all `meet`, `calendar` and `docs` subcommands, eight leaves) and nowhere else (not on `auth *`, `update`); without it the default account is used, and the first login becomes the default.
-- `meet list` and `calendar list` also take `--from TIME [--to TIME] [--query TEXT] [--limit N]` (range mode, oldest first; `--to` and `--limit` need `--from`; `--query` also works without `--from`); details in `docs/design/commands.md`.
+- `skills/gdcli/` (SKILL.md and references/*.md, installable with `npx skills`) is the single source of truth for how every command is used; `gdcli skills` embeds it at build time with `include_str!`; a change to a command, option, record key or error message updates it in the same commit (`tests/skills.rs` enforces this).
+- `meet list` and `calendar list` also take `--from TIME [--to TIME] [--query TEXT] [--limit N]` (range mode, oldest first; `--to` and `--limit` need `--from`; `--query` also works without `--from`); details: `skills/gdcli/references/{meet,calendar}.md` (usage), `docs/design/commands.md` (design).
 - `docs get`: use an official Markdown-output API if one exists, otherwise write own Markdown conversion. Option `--json` (raw JSON output) exists only if no official Markdown API exists and raw JSON is available; otherwise drop the option.
 - Current decision: Drive `files.export` with `text/markdown` is the official Markdown API, so `docs get` has NO `--json`.
 
@@ -51,3 +53,4 @@ gdcli update             update gdcli from the latest GitHub release
 
 - `docs/setup.md`
 - `docs/design/`
+- `skills/gdcli/`

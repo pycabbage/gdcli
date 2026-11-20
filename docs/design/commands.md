@@ -1,5 +1,7 @@
 # Commands and output formats
 
+Usage lives in the agent skill, not here: `skills/gdcli/` (printed by `gdcli skills`, design in `skills.md`) is the single source of truth for every command, option, range, default, column, record key, example and message that an agent needs. This file keeps what the skill does not carry: the rules shared by all commands, the selection algorithms, the flows, the observed facts behind them, the `update` details and the error text rules.
+
 All output is plain UTF-8 text on stdout (or JSON with `--json`), designed to be cheap for LLM agents to read. Errors go to stderr as `error: <message>` with exit status 1; usage errors exit with 2. Nothing is printed to stdout on failure.
 
 Common rules:
@@ -18,40 +20,11 @@ Common rules:
 - Timeouts: connecting to a Google or GitHub host fails after 10 s, and every command except `auth setup` and `auth login` (which wait for the user) fails with `error: timed out after 120s` when it has not finished after 120 s; inside `auth login` the migration of an old token and the identification of the new account are each bounded by the same 120 s.
 - `fields` partial responses are sent on every JSON request, so only the printed data is transferred.
 
-Error text: every message is built from our own lowercase context (`cannot ...`, `token retrieval failed: ...`, `google api error ...`, `request failed: ...`), so the first character is lowercase by construction and no formatting helper exists; a binary-level test checks the real stderr. Google API errors print as `google api error <status>: <message>` when the response carries a JSON `error.message` (cut at 300 characters, `...` appended), and as `google api error <status> <reason>` (for example `google api error 429 Too Many Requests`) otherwise, for Calendar, Drive, Docs and Meet alike. A successful answer that is not JSON prints `unexpected google api response: <parse error>`. Raw response bodies, headers and debug dumps are never printed. The account messages (``no account is logged in: run `gdcli auth login` ``, `unknown account ...`, `no default account; ...`, `cannot identify the account: ...`, the token messages that name the account) are listed in `accounts.md`, the `meet notes` and `meet transcript` messages and `invalid range` under their commands; every hint names `gdcli auth login` or `gdcli auth setup` (0.3.0 said `gdcli login` and `gdcli setup`).
+Error text: every message is built from our own lowercase context (`cannot ...`, `token retrieval failed: ...`, `google api error ...`, `request failed: ...`), so the first character is lowercase by construction and no formatting helper exists; a binary-level test checks the real stderr. Google API errors print as `google api error <status>: <message>` when the response carries a JSON `error.message` (cut at 300 characters, `...` appended), and as `google api error <status> <reason>` (for example `google api error 429 Too Many Requests`) otherwise, for Calendar, Drive, Docs and Meet alike. A successful answer that is not JSON prints `unexpected google api response: <parse error>`. Raw response bodies, headers and debug dumps are never printed. The account messages (``no account is logged in: run `gdcli auth login` ``, `unknown account ...`, `no default account; ...`, `cannot identify the account: ...`, the token messages that name the account) are listed in `accounts.md`, the `meet notes` and `meet transcript` messages are in `skills/gdcli/references/meet.md` and `invalid range` is described under the list commands; every hint names `gdcli auth login` or `gdcli auth setup` (0.3.0 said `gdcli login` and `gdcli setup`).
 
-## `gdcli auth setup`
+## `gdcli auth setup|login|list|set-default`
 
-Prints `docs/setup.md`, `Destination: <path>`, and the prompt `Path of the downloaded JSON (empty if already placed at the destination): `. The typed path is trimmed, surrounding quotes are removed and a leading `~/` is expanded to the home directory. Then installs and validates the client secret and runs the login flow (see `auth.md`).
-
-## `gdcli auth login`
-
-Runs the OAuth login flow for one Google account (the browser shows the account chooser). Prints the authorization URL, then three lines rendered by `output::record` after the login succeeded: `account: <email>`, `status: added` (a new account) or `status: refreshed` (an account that was already known; its token is replaced) and `default: true` or `default: false`. The first account becomes the default. Nothing is deleted before the new token exists. Layout, migration and errors: `accounts.md`.
-
-```
-account: bob@example.org
-status: added
-default: false
-```
-
-## `gdcli auth list`
-
-Header `account<TAB>default`, then one row per logged-in account sorted by email; `default` is `true` for the account that `--account`-less commands use and `false` otherwise (no row is marked when the pointer is stale or when several accounts exist and no default was chosen; the command still succeeds). The header alone is printed when there is no account. No `--json`.
-
-```
-account	default
-alice@example.com	true
-bob@example.org	false
-```
-
-## `gdcli auth set-default <email>`
-
-Makes a logged-in account the default and prints `account: <email>` and `default: true`. An address without an account is `unknown account <email>; known accounts: <known>`. The email is validated and lowercased like `--account`. There is no top-level `gdcli set-default`.
-
-```
-account: bob@example.org
-default: true
-```
+Usage: `skills/gdcli/references/auth.md`. Design: `accounts.md` (layout, selection, migration, the Drive dependency, the messages) and `auth.md` (the OAuth client, scopes, flows). `auth list` is a list command (header `account<TAB>default`, rows sorted by email, no `--json`, no past or upcoming grouping); `auth login` and `auth set-default` print `output::record` lines; there is no top-level `gdcli set-default`.
 
 ## `gdcli update`
 
@@ -105,17 +78,9 @@ latest: 0.2.0
 | the replacement itself fails | `error: cannot replace the executable in /usr/bin: <io error>` |
 | the location of the running executable cannot be determined | `error: cannot locate the running executable` |
 
-## `gdcli calendar list [--past N] [--upcoming N] [--from TIME] [--to TIME] [--query TEXT] [--limit N] [--json] [-a, --account EMAIL]`
+## `gdcli calendar list`
 
-Primary calendar, two modes. Default mode: `--past N` and `--upcoming N` (alias `--future`) choose how many items of each side are fetched: default 5 each, accepted range 0 to 1000 (clap rejects the rest with exit status 2). `0` skips that side entirely: no request is made for it. Memory stays bounded by N (a ring buffer of N for the past side, N collected events for the upcoming side). Range mode (`--from`): see "Range mode and `--query`" below. The first line is the header `id<TAB>when<TAB>start<TAB>end<TAB>summary` (`events::CALENDAR_HEADER`, the only copy of the text); the JSON keys are the same five names.
-
-| Column | Meaning | Values | Empty when |
-|---|---|---|---|
-| `id` | event id, the argument of `calendar get` and `meet get` | Calendar event id | never |
-| `when` | which group the event belongs to | `past`, `upcoming` | never |
-| `start` | start of the event | RFC 3339 UTC, or `YYYY-MM-DD` for all-day events | the API sent no start |
-| `end` | end of the event (exclusive date for all-day events) | RFC 3339 UTC or `YYYY-MM-DD` | the API sent no end |
-| `summary` | event title | text, tabs and line breaks replaced by spaces | the event has no title |
+Usage and columns: `skills/gdcli/references/calendar.md`. Primary calendar, two modes. Default mode: `--past N` and `--upcoming N` (alias `--future`) choose how many items of each side are fetched: default 5 each, accepted range 0 to 1000 (clap rejects the rest with exit status 2). `0` skips that side entirely: no request is made for it. Memory stays bounded by N (a ring buffer of N for the past side, N collected events for the upcoming side). Range mode (`--from`): see "Range mode and `--query`" below. The header line is `events::CALENDAR_HEADER` (and `events::MEET_HEADER` for `meet list`), the only copy of the text; the JSON keys are the header names.
 
 Selection (the two lookups run concurrently; one implementation, `events::list`, shared with `meet list` and parameterised by a predicate):
 
@@ -132,70 +97,29 @@ Range mode and `--query` (shared by `calendar list` and `meet list`):
 - `--query` is sent as the Calendar `q` parameter (free text over title, description, location, and attendee and organizer names and emails, case-insensitive on Google's side, percent-encoded by the URL builder) on every `events.list` request. In range mode it filters the range. In default mode it is added to both sides and to every nested past window and every page, so the lists are the latest N matches; the past search can look back at most 730 days (the widest window), so `--query standup --past 10 --upcoming 0` is the latest 10 matches of the last 730 days and older matches need `--from`. A blank query is rejected by the value parser (`invalid query: it must not be blank`, exit status 2), like a blank `--tab`.
 - `ListArgs::check()` runs first in the `calendar list` and `meet list` arms of `lib.rs`, before the client secret is read and before any request: `--from` must be earlier than `--to`, compared in whole seconds like the request (`00:00:00.1Z` to `00:00:00.9Z` would send equal `timeMin` and `timeMax`, which Calendar answers with a 400), else `invalid range: --from must be earlier than --to` (exit status 1, nothing printed). Header, columns and `--json` are the same in both modes; a range without events prints the header alone (`[]` with `--json`).
 
-## `gdcli calendar get <id> [--json] [-a, --account EMAIL]`
+## `gdcli calendar get`
 
-`events.get` on the primary calendar with a `fields` mask. The record, in this order (keys absent when empty):
+`events.get` on the primary calendar with a `fields` mask; the record (keys, order, meaning) is in `skills/gdcli/references/calendar.md`. Design facts: `meeting_code` is set only for a `hangoutsMeet` conference, `conference_id` only for another conference type; `meeting_uri` is the `hangoutLink`, else `https://meet.google.com/<meeting_code>`; `attendees[].optional` is kept only when true; `attachments(title,mimeType,fileId)` is in the mask (`fileUrl` and `iconLink` are not requested) and the text form is `attachment: title="Notes by Gemini" mime_type=application/vnd.google-apps.document file_id=1AbCdEf`; a Google Doc `file_id` works with `docs get` and `docs metadata`; the description comes last because it may span lines.
 
-| Key | Type | Meaning |
-|---|---|---|
-| `id`, `summary`, `status` | string | event id, title, `confirmed` / `tentative` / `cancelled` |
-| `start`, `end` | string | UTC `...Z` for timed events, plain date for all-day events |
-| `time_zone` | string | time zone name of the start |
-| `location` | string | |
-| `meeting_code` | string | Google Meet code when the event has a Meet conference |
-| `conference_id` | string | conference id of a non-Meet conference (Zoom, ...), only when `meeting_code` is absent |
-| `meeting_uri` | string | the `hangoutLink`, else `https://meet.google.com/<meeting_code>` |
-| `html_link` | string | link to the event in Calendar |
-| `organizer`, `creator` | object `{name, email}` | |
-| `attendees` | array of `{name, email, response_status, optional}` | `optional` only when true |
-| `recurrence` | array of string | RRULE / EXDATE lines |
-| `event_type`, `visibility`, `recurring_event_id` | string | |
-| `entry_points` | array of `{type, uri}` | video, phone, ... |
-| `attachments` | array of `{title, mime_type, file_id}` | the event's attachments (for example the Gemini notes document), `attachments(title,mimeType,fileId)` in the `fields` mask (`fileUrl` and `iconLink` are not requested); `file_id` is absent for an attachment without one; text `attachment: title="Notes by Gemini" mime_type=application/vnd.google-apps.document file_id=1AbCdEf`; a Google Doc `file_id` works with `docs get` and `docs metadata` |
-| `created`, `updated` | string | UTC `...Z` |
-| `description` | string | last; may span lines |
+## `gdcli meet list`
 
-Text example: `id: abc`, `summary: Planning`, ..., `organizer: name=Boss email=boss@example.com`, `attendee: name=Bee email=b@example.com response_status=needsAction optional=true`, `entry_point: type=video uri=https://meet.google.com/abc-defg-hij`, `description: First line` (continuation lines indented by two spaces).
-
-## `gdcli meet list [--past N] [--upcoming N] [--from TIME] [--to TIME] [--query TEXT] [--limit N] [--json] [-a, --account EMAIL]`
-
-The first line is the header `id<TAB>when<TAB>start<TAB>end<TAB>meeting_code<TAB>summary` (`events::MEET_HEADER`; the JSON keys are the same six names). It is `calendar list` restricted to events that carry a Google Meet link (`conferenceData.conferenceSolution.key.type == hangoutsMeet`, not cancelled), with one extra column. The count options, range mode and `--query` work as in `calendar list`; for Meet the upcoming page size stays 25 and the page size of range mode is 250.
-
-| Column | Meaning | Values | Empty when |
-|---|---|---|---|
-| `id` | event id, the argument of `meet get` and `calendar get` | Calendar event id | never |
-| `when` | which group the meeting belongs to | `past`, `upcoming` | never |
-| `start` | start of the event | RFC 3339 UTC, or `YYYY-MM-DD` for all-day events | the API sent no start |
-| `end` | end of the event | same formats as `start` | the API sent no end |
-| `meeting_code` | `conferenceData.conferenceId`, the Meet code | `abc-defg-hij` | never (rows without a Meet link are not listed) |
-| `summary` | event title | text, tabs and line breaks replaced by spaces | the event has no title |
+Usage and columns: `skills/gdcli/references/meet.md`. It is `calendar list` restricted to events that carry a Google Meet link (`conferenceData.conferenceSolution.key.type == hangoutsMeet`, not cancelled), with the extra column `meeting_code` (`conferenceData.conferenceId`). The count options, range mode and `--query` work as in `calendar list`; for Meet the upcoming page size stays 25 and the page size of range mode is 250.
 
 Same selection rules as `calendar list` (past = ended, a running meeting counts as upcoming, cancelled events dropped, no duplicates, nested past windows with the predicate applied before the N element ring buffer). The `fields` mask adds `conferenceData(conferenceId,conferenceSolution(key(type)))` to the calendar mask. The Meet REST API is not called, so the list needs no Meet scope or Meet API access.
 
-## `gdcli meet get <id> [--json] [-a, --account EMAIL]`
+## `gdcli meet get`
 
-`<id>` is the event id printed by `meet list` or `calendar list`; nothing else is accepted (no meeting codes, no conference record ids). Flow:
+The argument is the event id printed by `meet list` or `calendar list`; nothing else is accepted (no meeting codes, no conference record ids). Record keys and examples: `skills/gdcli/references/meet.md`. Flow:
 
 1. `events.get` of the event (`fields=id,summary,start,end,conferenceData(...),attachments(title,mimeType,fileId)`). If it has no Google Meet conference the command fails with `event <id> has no google meet conference`.
 2. Concurrently: `spaces.get` of `spaces/<meeting code>` and `conferenceRecords.list` (`pageSize=5`, newest first) with the filter `space.meeting_code = "<code>" AND start_time>="<event start - 1h>" AND start_time<="<event end + 1h>"` (RFC 3339 UTC with milliseconds; the Meet filter grammar documents `AND` and `start_time` comparisons). A meeting code is shared by every occurrence of a recurring event, so the time window selects the occurrence; the slack is the constant `SLACK_HOURS`. All-day events (and events without date-times) use only the meeting code.
 3. For each returned conference record (typically one), concurrently: participants (`pageSize=250`), recordings, transcripts and Gemini smart notes (`smartNotes.list`, `pageSize=100`, `fields=smartNotes(state,startTime,endTime,docsDestination/document)`; GA since 2026-04-02, covered by the scopes already requested), four requests on the same HTTP/2 connection.
 
-Record (keys absent when empty):
-
-| Key | Type | Meaning |
-|---|---|---|
-| `id`, `summary`, `start`, `end` | string | event fields, times as in `calendar get` |
-| `meeting_code`, `meeting_uri` | string | the code and `https://meet.google.com/<code>` |
-| `access_type`, `entry_point_access`, `moderation` | string | from the Meet space `config` (Google withholds it for spaces the account does not own, then the keys are absent) |
-| `attachments` | array of `{title, mime_type, file_id}` | the event's attachments, as in `calendar get`; placed after the space settings and before `conferences` |
-| `conferences` | array, oldest first | one object per conference record; present (possibly empty) when the record list succeeded, absent when that call failed |
-| `meet_api` | string | `unavailable (<code> <google message>)`, only when a Meet call answered 403/404 |
-
-A conference object has `id`, `start`, `end` (as the API returns them; an empty end means it is still running), and the arrays `participants` (`{name, kind, start, end}` with `kind` `user`, `anonymous` or `phone`), `recordings` (`{state, start, end, drive_file}`) `transcripts` and `smart_notes` (both `{state, start, end, document_id}`; feed `document_id` to `docs get`, or use `meet transcript` and `meet notes`). In text each conference prints `conference: id=REC1 start=... end=...` followed by `participant: name=Alice kind=user start=... end=...`, `recording: state=FILE_GENERATED start=... end=... drive_file=...` `transcript: state=ENDED document_id=...` and `smart_note: state=FILE_GENERATED start=... end=... document_id=...` lines; an empty `conferences` array prints `conference: none`.
+Record: the keys follow the order of the `json!` literals in `meet::get` and `records::conferences`; `access_type`, `entry_point_access` and `moderation` come from the Meet space `config` (Google withholds it for spaces the account does not own, then the keys are absent); `attachments` sits after the space settings and before `conferences`; `conferences` (oldest first, one object per conference record) is present, possibly empty, when the record list succeeded and absent when that call failed; an empty `conferences` array prints `conference: none`; an empty `end` of a conference means it is still running; `meet_api` is `unavailable (<code> <google message>)` and only present when a Meet call answered 403 or 404. The artifacts of a conference are `participants` (`kind` is `user`, `anonymous` or `phone`), `recordings`, `transcripts` and `smart_notes` (both with `document_id`, the input of `docs get`, `meet transcript` and `meet notes`).
 
 Meet 403 or 404 answers are tolerated per call (space, conference list, participants, recordings, transcripts, smart notes, for example a meeting organised by someone else): everything that did arrive is printed, followed by the `meet_api` entry (the first failure), and the exit status is 0. Every other error is a normal error and nothing is printed. What Meet answers for `smartNotes.list` on an account or a meeting without Gemini notes (an empty list, 403 or 404) is not known from documentation; every form is tolerated and an empty list gives no `smart_notes` key.
 
-## `gdcli meet notes <id> [--tab TAB] [-a, --account EMAIL]` and `gdcli meet transcript <id> [--tab TAB] [-a, --account EMAIL]`
+## `gdcli meet notes` and `gdcli meet transcript`
 
 Print the Gemini notes document (`meet notes`) or the transcript document (`meet transcript`) of a meeting as Markdown. `<id>` is the event id of `meet get`. No `--json` (the output is Google's Markdown export). Only Meet artifacts are used (there is no fallback to the event attachments, whose titles are localized): `smartNotes` for notes, `transcripts` for the transcript, items in state `FILE_GENERATED` that carry a document id. Meet keeps a conference record only from the start of a meeting until 30 days after it, so an upcoming meeting and a meeting older than 30 days have none: read those with the `attachment:` lines of `calendar get` and `docs get <file_id>`. Flow (all requests sequential, Bearer token, no retry, no polling):
 
@@ -207,23 +131,13 @@ Print the Gemini notes document (`meet notes`) or the transcript document (`meet
 
 `--tab` is the `docs get` parser and resolution. A Gemini notes document has one or two tabs, depending on the notes version and settings (measured on a real account: one document with a single tab, another with two). Tab titles are localized: in an English interface Google's help page names them `Quick notes` (a short summary and action items) and `Full notes` (summary, decisions, action items, details), but the titles are not a contract and the first tab of the measured account had another title. List the tabs with `gdcli docs metadata <document_id>` (`tab:` lines) and pass a tab id (`t.abc`) or a title to `--tab` (both select the same tab and return the same bytes). Without `--tab` the whole export contains every tab, but it is not the byte concatenation of the per-tab exports (measured: 29,559 B whole against 9,451 B plus 20,557 B for the two tabs), so do not join per-tab exports and expect the whole export. For a document with a single tab the whole export and the export of its only tab differ only by the per-tab formatting differences (measured: 8,506 B against 8,495 B; `docs get` below). A transcript is a separate document, not a tab.
 
-Errors (stderr, exit status 1, empty stdout; `<label>` is `gemini notes document` for `meet notes` and `transcript` for `meet transcript`):
-
-| Situation | Message |
-|---|---|
-| no Meet conference on the event | `event <id> has no google meet conference` |
-| no conference record (an upcoming meeting, or one older than 30 days) | `no conference record for event <id>; Meet keeps a record only from the start of a meeting until 30 days after it (see the attachment lines of calendar get)` |
-| records exist but no item of the collection | `no gemini notes document for event <id>` / `no transcript for event <id>` |
-| items exist but none is `FILE_GENERATED` with a document id | `the <label> of event <id> is not ready (state <state>)`, for example `the gemini notes document of event abc is not ready (state ENDED)` |
-| Meet answers 403 or 404 on the record list or an artifact list | `google api error 403: <message>` |
-| the export of a document fails (a 404 is possible for a file the account cannot see) | `cannot read <label> <document id>: google api error 403: <message>` |
-| `--tab` matches no tab or several | `cannot read <label> <document id>: tab "x" not found; available: ...` (the `docs get --tab` messages behind the prefix) |
+Failure behaviour (the message texts are in `skills/gdcli/references/meet.md`): every failure is an error with exit status 1 and an empty stdout, and nothing is retried or polled. 403 and 404 on the conference record list, on an artifact list and on a document export are errors here, not tolerated as in `meet get` (a 404 is possible on an export, because Drive may hide a file the account cannot see). All exports are opened before the first byte is written, so a refused document, a status error or an unknown `--tab` prints nothing. An export or `--tab` error is wrapped with a context that names the label (`gemini notes document` for `meet notes`, `transcript` for `meet transcript`) and the document id, and the `docs get --tab` messages follow it.
 
 Records of a recurring event are selected like in `meet get` (meeting code plus the event window), so an occurrence yields its own records; an event without date-times filters by meeting code only and may return documents of other occurrences (the same limit exists in `meet get`). Only the first page of records (5) and of artifacts (100) is read.
 
-## `gdcli docs get <id> [--tab <id|title>] [-a, --account EMAIL]`
+## `gdcli docs get`
 
-`<id>` is a document id or any URL containing `/d/<id>` (for example `https://docs.google.com/document/d/<id>/edit?tab=t.0`; the `tab=` of a pasted URL is ignored, use `--tab`). There is no `--json`: the document is exported as Markdown by Google itself, which is the official Markdown API, so no conversion is implemented.
+The argument is a document id or any URL containing `/d/<id>` (`document_id` cuts it at the next `/`, `?` or `#`; the `tab=` of a pasted URL is ignored, use `--tab`). There is no `--json`: the document is exported as Markdown by Google itself, which is the official Markdown API, so no conversion is implemented.
 
 - Without `--tab`: Drive `files.export` with `mimeType=text/markdown`, the whole document; the export contains every tab one after another, with no tab titles and no separator added by gdcli, but it is not the byte concatenation of the per-tab exports (below). The response body is copied to stdout chunk by chunk as it arrives. Google limits exported content to 10 MB; larger documents fail with the API's `exportSizeLimitExceeded` message.
 - With `--tab <TAB>`: one tab only. No official API exports a single tab as Markdown (Drive `files.export` has only `mimeType`; a `tab=` parameter there is silently ignored). gdcli therefore (1) lists the tabs with the Docs API, (2) resolves `<TAB>` client-side, and (3) requests the Docs web export `https://docs.google.com/document/d/<id>/export?format=md&tab=<tabId>`. This is an explicit exception, pending owner sign-off, because the `tab=` export parameter is undocumented and could change; exit plan: own conversion from the Docs API JSON (about 300 lines).
@@ -233,23 +147,6 @@ Records of a recurring event are selected like in `meet get` (meeting code plus 
   4. Observed facts (live check with a real account, 2026-11-18): the 307 target is `https://doc-xx-xx-docstext.googleusercontent.com/export/...?format=md&tab=...&dat=...` (host class `*.googleusercontent.com`); the final answer is `200` with `Content-Type: text/x-markdown; charset=utf-8` (not `text/markdown`; the body is valid Markdown) and a `Content-Disposition` header that carries the document title, which gdcli ignores. Per-tab Markdown differs from the whole-document export only in formatting: headings carry no `{#id}` anchors, internal links are tab-qualified (`(?tab=t.xxx#heading=h.xxx)`) instead of `(#MM:SS)`, and checkbox lists are loose (blank lines between items); the content is otherwise identical. Neither export ends with a newline. The whole-document export is not the byte concatenation of the tab exports: a live check on 2026-11-20 of a two-tab Gemini notes document measured 29,559 B for the whole export and 9,451 B plus 20,557 B (30,008 B) for the two tab exports; a single-tab document measured 8,506 B whole against 8,495 B for its only tab. `--tab` by title returns the same bytes as `--tab` by id.
   5. `--tab` must not be blank: clap rejects it with `invalid tab: it must not be blank` (exit status 2) before any request.
 
-## `gdcli docs metadata <id> [--json] [-a, --account EMAIL]`
+## `gdcli docs metadata`
 
-Only the metadata of a Google Doc. Two calls run concurrently: Drive `files.get` (`supportsAllDrives=true`, `fields=id,name,mimeType,createdTime,modifiedTime,version,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),shared,trashed,starred,viewedByMeTime,modifiedByMeTime,parents,description`) and the Docs API tab list of `docs get --tab`. The file must be a Google Doc (`mimeType` `application/vnd.google-apps.document`), else `not a google doc (mimeType <x>)`. Record, in this order (keys absent when empty; times as Drive returns them):
-
-| Key | Type | Meaning |
-|---|---|---|
-| `id` | string | document id |
-| `title` | string | Drive `name` |
-| `modified_time`, `created_time` | string | RFC 3339 UTC |
-| `version` | string | Drive version number |
-| `owners` | array of `{name, email}` | |
-| `last_modified_by` | object `{name, email}` | |
-| `html_link` | string | `webViewLink` |
-| `shared`, `trashed`, `starred` | boolean | |
-| `viewed_by_me_time`, `modified_by_me_time` | string | |
-| `parents` | array of string | folder ids |
-| `description` | string | |
-| `mime_type` | string | |
-| `tabs` | array of `{id, title, index, parent_id, nesting_level}` | flattened tab tree; `parent_id` only for child tabs; text `tab: id=t.first title=Overview index=0 nesting_level=0` |
-| `tabs_unavailable` | string | instead of `tabs` when the Docs API call fails (for example the API is not enabled): Google's short message; the command still succeeds |
+Only the metadata of a Google Doc. Two calls run concurrently: Drive `files.get` (`supportsAllDrives=true`, `fields=id,name,mimeType,createdTime,modifiedTime,version,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),shared,trashed,starred,viewedByMeTime,modifiedByMeTime,parents,description`) and the Docs API tab list of `docs get --tab`. The file must be a Google Doc (`mimeType` `application/vnd.google-apps.document`), else `not a google doc (mimeType <x>)`. Record: keys, order and meaning are in `skills/gdcli/references/docs.md`. Times are passed through as Drive returns them. `parent_id` appears only on child tabs; `tabs_unavailable` replaces `tabs` when the Docs API call fails (for example the API is not enabled) and carries Google's short message, the command still succeeds.

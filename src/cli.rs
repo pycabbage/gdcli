@@ -1,5 +1,5 @@
 use crate::auth::accounts::Email;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -61,8 +61,22 @@ pub enum Command {
     Calendar(CalendarCommand),
     #[command(subcommand, about = "Google Docs documents")]
     Docs(DocsCommand),
+    #[command(about = "Print the agent skill of gdcli: SKILL.md, one reference, or everything")]
+    Skills {
+        #[arg(value_enum, help = "Reference to print; without it SKILL.md")]
+        topic: Option<Topic>,
+    },
     #[command(about = "Update gdcli from the latest GitHub release")]
     Update,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum Topic {
+    Full,
+    Meet,
+    Calendar,
+    Docs,
+    Auth,
 }
 
 #[derive(Debug, Clone, Default, Args)]

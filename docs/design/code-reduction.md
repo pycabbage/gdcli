@@ -151,3 +151,18 @@ Before: `src/` 2133, `tests/` 7032 (non-blank, after `cargo fmt`). After: `src/`
 | 69 | the `docs get` help text no longer says that the tabs are "concatenated with nothing between them": the whole export is not the byte concatenation of the tab exports (29,559 B against 9,451 B plus 20,557 B in the live check), and `rustfmt` then puts the attribute on one line | `cli.rs` -2 | kept |
 | 70 | documentation only: Gemini notes documents have one or two tabs, titles are localized, the real-credential results are recorded in `testing.md` | 0 lines of code | kept |
 
+
+## Wave 11: the agent skill (v0.4.0, work package 3)
+
+Before: `src/` 2131, `tests/` 7032 (non-blank, after `cargo fmt`). After the review fixes: `src/` 2178 (+47: `src/skills.rs` 24, `cli.rs` 189 to 202 with the `Skills` variant and the `Topic` enum, `lib.rs` 84 to 94 with the writer parameter of `run_with` and `execute`), `tests/` 7614 (+582: `tests/skills.rs` 480, 16 tests; `tests/common/mod.rs` 321 to 453 with the shared fixtures and `mount_full_meeting`; `tests/docs.rs` 486 to 440 and `tests/calendar_get.rs` 211 to 177 after the fixtures moved out; `tests/cli.rs` +43 for one test and three extra rows; `tests/units.rs` +7). Before the review fixes the totals were `src/` 2170 and `tests/` 7598. The skill itself is five files of 225 lines and 19,630 bytes. 253 tests.
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 71 | `skills::print` writes a slice of parts in a loop with a `\n` before every part but the first, so `full` needs no joined string and every topic shares one code path | `src/skills.rs` 24 lines in all, no allocation | kept |
+| 72 | the five files are embedded with `include_str!` straight from `skills/gdcli/` (no build script, no generated or committed copies, cargo tracks the files) | 0 lines | kept |
+| 73 | `Topic` is a derived `ValueEnum` (no hand-written parser, clap prints the possible values and rejects other cases) | `cli.rs` +13 with the variant | kept |
+| 74 | the contract tests take their oracle from `Cli::command()` (leaves, options, positionals, `--json` placement) instead of lists in the test, so a new command or option fails the suite until its reference is written | tests only, no list to maintain | kept |
+| 75 | the full-event, tab-tree and file fixtures moved into `tests/common` instead of being copied for the key tests | `tests/docs.rs` -46, `tests/calendar_get.rs` -34, `tests/common/mod.rs` +132 with `mount_full_meeting` | kept |
+| 76 | error messages in the files are checked by cutting them at their placeholders and searching `src/` for the pieces, instead of keeping a table of messages in the test | one 40-line test, no third copy of any message | kept |
+| 77 | `run_with(cli, resolve, out)` takes the output writer and `execute` no longer locks stdout itself (review fix): `run` passes `&mut std::io::stdout().lock()` and the tests pass a `Vec`, so `skills_does_not_resolve_the_paths` compares the captured bytes with `references/docs.md` and counts the resolver calls instead of leaving a reference in the output of `cargo test`; the earlier choice to keep `run_with(cli, resolve)` and accept the noise is withdrawn | `lib.rs` +8 (the signatures), no `&mut out` left in the arms, `tests/units.rs` +7 | kept |
+| 78 | the references carry the columns, the key lists with their meaning and the user-visible rules that left `commands.md` (one place for usage), written without literal tab characters; the drafts of 12,396 bytes grew to 19,630 bytes | binary +24,720 bytes for the text (`performance.md`); `commands.md` 255 to 162 lines | kept |

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{Harness, text};
+use common::{Harness, mount_file, mount_tabs, tab_tree, text};
 use gdcli::docs;
 use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path, query_param};
@@ -45,37 +45,6 @@ async fn reports_export_failures() {
         .unwrap_err();
     assert!(gdcli::message(&error).contains("too large to be exported"));
     assert_eq!(out, b"");
-}
-
-const TAB_FIELDS: &str = "tabs(tabProperties(tabId,title,index,parentTabId,nestingLevel),childTabs(tabProperties(tabId,title,index,parentTabId,nestingLevel),childTabs(tabProperties(tabId,title,index,parentTabId,nestingLevel))))";
-
-fn tab(id: &str, title: &str, index: u32, parent: Option<(&str, u32)>) -> Value {
-    let mut properties = json!({"tabId": id, "title": title});
-    if index > 0 {
-        properties["index"] = json!(index);
-    }
-    if let Some((parent, level)) = parent {
-        properties["parentTabId"] = json!(parent);
-        properties["nestingLevel"] = json!(level);
-    }
-    json!({ "tabProperties": properties })
-}
-
-fn tab_tree() -> Value {
-    let mut first = tab("t.first", "Overview", 0, None);
-    first["childTabs"] = json!([tab("t.child", "Notes", 0, Some(("t.first", 1)))]);
-    json!({"tabs": [first, tab("t.second", "Notes", 1, None), tab("t.third", "Plan", 2, None)]})
-}
-
-async fn mount_tabs(harness: &Harness, body: Value) {
-    Mock::given(method("GET"))
-        .and(header("authorization", common::BEARER))
-        .and(path("/v1/documents/DOC123"))
-        .and(query_param("includeTabsContent", "true"))
-        .and(query_param("fields", TAB_FIELDS))
-        .respond_with(ResponseTemplate::new(200).set_body_json(body))
-        .mount(&harness.server)
-        .await;
 }
 
 async fn tab_ids(harness: &Harness) -> Vec<String> {
@@ -277,27 +246,6 @@ async fn a_throttled_export_is_a_short_error() {
         gdcli::message(&error),
         "google api error 429 Too Many Requests"
     );
-}
-
-const FILE_FIELDS: &str = "id,name,mimeType,createdTime,modifiedTime,version,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),shared,trashed,starred,viewedByMeTime,modifiedByMeTime,parents,description";
-
-async fn mount_file(harness: &Harness, mime: &str) {
-    Mock::given(method("GET"))
-        .and(header("authorization", common::BEARER))
-        .and(path("/drive/v3/files/DOC123"))
-        .and(query_param("supportsAllDrives", "true"))
-        .and(query_param("fields", FILE_FIELDS))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": "DOC123", "name": "Quarterly plan", "mimeType": mime, "version": "42",
-            "createdTime": "2026-10-01T00:00:00.000Z", "modifiedTime": "2026-11-17T10:30:00.123Z",
-            "webViewLink": "https://docs.google.com/document/d/DOC123/edit",
-            "owners": [{"displayName": "Alice", "emailAddress": "alice@example.com"}],
-            "lastModifyingUser": {"displayName": "Bob", "emailAddress": "bob@example.com"},
-            "shared": true, "trashed": false, "starred": false,
-            "viewedByMeTime": "2026-11-18T01:00:00.000Z", "parents": ["FOLDER1"], "size": "dropped"
-        })))
-        .mount(&harness.server)
-        .await;
 }
 
 async fn metadata(harness: &Harness, json: bool) -> anyhow::Result<String> {

@@ -280,6 +280,7 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
         &["docs", "get", "d"],
         &["auth", "list"],
         &["auth", "set-default", "a@b.c"],
+        &["skills"],
         &["update"],
     ] {
         assert_eq!(
@@ -313,9 +314,15 @@ async fn google_commands_report_the_path_error() {
     ] {
         let cli = gdcli::Cli::try_parse_from(std::iter::once("gdcli").chain(args.iter().copied()))
             .unwrap();
-        let error = gdcli::run_with(cli, &|| anyhow::bail!("cannot resolve XDG config home: x"))
-            .await
-            .unwrap_err();
+        let mut out = Vec::new();
+        let error = gdcli::run_with(
+            cli,
+            &|| anyhow::bail!("cannot resolve XDG config home: x"),
+            &mut out,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(out, b"", "{args:?}");
         assert_eq!(
             gdcli::message(&error),
             "cannot resolve XDG config home: x",

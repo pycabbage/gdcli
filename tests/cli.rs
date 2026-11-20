@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
 use gdcli::Cli;
-use gdcli::cli::{AuthCommand, CalendarCommand, Command, DocsCommand, MeetCommand};
+use gdcli::cli::{AuthCommand, CalendarCommand, Command, DocsCommand, MeetCommand, Topic};
 
 fn parse(args: &[&str]) -> Result<Command, clap::Error> {
     Cli::try_parse_from(std::iter::once("gdcli").chain(args.iter().copied())).map(|cli| cli.command)
@@ -32,6 +32,10 @@ fn parses_every_specified_command() {
         other => panic!("{other:?}"),
     }
     assert!(matches!(parse(&["update"]), Ok(Command::Update)));
+    assert!(matches!(
+        parse(&["skills"]),
+        Ok(Command::Skills { topic: None })
+    ));
     match parse(&["meet", "list"]) {
         Ok(Command::Meet(MeetCommand::List(args))) => {
             assert_eq!((args.past, args.upcoming, args.json), (5, 5, false));
@@ -124,6 +128,7 @@ fn json_exists_exactly_where_the_owner_asked_for_it() {
         &["auth", "set-default", "a@b.c", "--json"],
         &["update", "--json"],
         &["update", "now"],
+        &["skills", "--json"],
         &["docs", "metadata", "d", "--tab", "x"],
         &["calendar", "get", "e", "--past", "1"],
     ] {
@@ -244,6 +249,7 @@ fn account_option_exists_exactly_on_the_google_commands() {
         "auth login",
         "auth set-default",
         "auth setup",
+        "skills",
         "update",
     ];
     let mut expected: Vec<(String, bool)> = with
@@ -503,6 +509,44 @@ fn notes_and_transcript_take_tab_account_and_no_json() {
             assert_eq!(error.exit_code(), 2, "{id}");
         }
     }
+}
+
+#[test]
+fn skills_takes_one_optional_topic_and_nothing_else() {
+    for (name, expected) in [
+        ("full", Topic::Full),
+        ("meet", Topic::Meet),
+        ("calendar", Topic::Calendar),
+        ("docs", Topic::Docs),
+        ("auth", Topic::Auth),
+    ] {
+        match parse(&["skills", name]) {
+            Ok(Command::Skills { topic: Some(topic) }) => {
+                assert_eq!(format!("{topic:?}"), format!("{expected:?}"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    for args in [
+        &["skills", "Meet"][..],
+        &["skills", "bogus"],
+        &["skills", ""],
+        &["skills", "meet", "docs"],
+        &["skills", "--json"],
+        &["skills", "-a", "a@b.c"],
+        &["skills", "--account", "a@b.c"],
+        &["skills", "--topic", "meet"],
+    ] {
+        let error = parse(args).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{args:?}");
+    }
+    let error = parse(&["skills", "bogus"]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("[possible values: full, meet, calendar, docs, auth]"),
+        "{error}"
+    );
 }
 
 #[test]

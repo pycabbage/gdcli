@@ -357,3 +357,144 @@ pub fn assert_same_information(text: &str, json: &str) {
     }
     assert_eq!(logical_lines(text), lines, "{text}");
 }
+
+pub fn calendar_event() -> Value {
+    json!({
+        "id": "abc123", "status": "confirmed", "summary": "Planning",
+        "description": "First line\r\nSecond line", "location": "Room 1",
+        "htmlLink": "https://calendar.google.com/event?eid=abc",
+        "hangoutLink": "https://meet.google.com/abc-defg-hij",
+        "eventType": "default", "recurringEventId": "series1",
+        "recurrence": ["RRULE:FREQ=WEEKLY"], "visibility": "public",
+        "created": "2026-11-01T09:00:00.000+09:00", "updated": "2026-11-02T00:00:00.000Z",
+        "start": {"dateTime": "2026-11-20T10:00:00+09:00", "timeZone": "Asia/Tokyo"},
+        "end": {"dateTime": "2026-11-20T11:00:00+09:00"},
+        "organizer": {"email": "boss@example.com", "displayName": "Boss"},
+        "creator": {"email": "boss@example.com"},
+        "attendees": [
+            {"email": "a@example.com", "responseStatus": "accepted"},
+            {"email": "b@example.com", "displayName": "Bee", "responseStatus": "needsAction", "optional": true},
+            {"email": "c@example.com", "responseStatus": "declined", "optional": false}
+        ],
+        "conferenceData": {
+            "conferenceId": "abc-defg-hij",
+            "conferenceSolution": {"key": {"type": "hangoutsMeet"}},
+            "entryPoints": [
+                {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"},
+                {"entryPointType": "phone", "uri": "tel:+1-555"}
+            ]
+        },
+        "etag": "dropped"
+    })
+}
+
+pub fn calendar_attachments() -> Value {
+    json!([
+        {"fileUrl": "https://docs.google.com/document/d/1AbCdEf/edit", "title": "Notes by Gemini",
+         "mimeType": "application/vnd.google-apps.document", "fileId": "1AbCdEf", "iconLink": "https://x.example/i.png"},
+        {"fileUrl": "https://example.com/a.pdf", "title": "Agenda", "mimeType": "application/pdf"}
+    ])
+}
+
+const TAB_FIELDS: &str = "tabs(tabProperties(tabId,title,index,parentTabId,nestingLevel),childTabs(tabProperties(tabId,title,index,parentTabId,nestingLevel),childTabs(tabProperties(tabId,title,index,parentTabId,nestingLevel))))";
+
+fn tab(id: &str, title: &str, index: u32, parent: Option<(&str, u32)>) -> Value {
+    let mut properties = json!({"tabId": id, "title": title});
+    if index > 0 {
+        properties["index"] = json!(index);
+    }
+    if let Some((parent, level)) = parent {
+        properties["parentTabId"] = json!(parent);
+        properties["nestingLevel"] = json!(level);
+    }
+    json!({ "tabProperties": properties })
+}
+
+pub fn tab_tree() -> Value {
+    let mut first = tab("t.first", "Overview", 0, None);
+    first["childTabs"] = json!([tab("t.child", "Notes", 0, Some(("t.first", 1)))]);
+    json!({"tabs": [first, tab("t.second", "Notes", 1, None), tab("t.third", "Plan", 2, None)]})
+}
+
+pub async fn mount_tabs(harness: &Harness, body: Value) {
+    Mock::given(method("GET"))
+        .and(header("authorization", BEARER))
+        .and(path("/v1/documents/DOC123"))
+        .and(query_param("includeTabsContent", "true"))
+        .and(query_param("fields", TAB_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&harness.server)
+        .await;
+}
+
+const FILE_FIELDS: &str = "id,name,mimeType,createdTime,modifiedTime,version,webViewLink,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),shared,trashed,starred,viewedByMeTime,modifiedByMeTime,parents,description";
+
+pub async fn mount_file(harness: &Harness, mime: &str) {
+    Mock::given(method("GET"))
+        .and(header("authorization", BEARER))
+        .and(path("/drive/v3/files/DOC123"))
+        .and(query_param("supportsAllDrives", "true"))
+        .and(query_param("fields", FILE_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "DOC123", "name": "Quarterly plan", "mimeType": mime, "version": "42",
+            "createdTime": "2026-10-01T00:00:00.000Z", "modifiedTime": "2026-11-17T10:30:00.123Z",
+            "webViewLink": "https://docs.google.com/document/d/DOC123/edit",
+            "owners": [{"displayName": "Alice", "emailAddress": "alice@example.com"}],
+            "lastModifyingUser": {"displayName": "Bob", "emailAddress": "bob@example.com"},
+            "shared": true, "trashed": false, "starred": false,
+            "viewedByMeTime": "2026-11-18T01:00:00.000Z", "parents": ["FOLDER1"], "size": "dropped"
+        })))
+        .mount(&harness.server)
+        .await;
+}
+
+pub async fn mount_full_meeting(harness: &Harness, notes_status: u16) {
+    let mut event = meet_event("evt1", CODE, "2026-11-17T01:00:00Z", "2026-11-17T02:00:00Z");
+    event["attachments"] = calendar_attachments();
+    harness
+        .mount_json(&format!("{EVENTS_PATH}/evt1"), event)
+        .await;
+    harness
+        .mount_json(
+            &format!("/v2/spaces/{CODE}"),
+            json!({"config": {"accessType": "TRUSTED", "entryPointAccess": "ALL", "moderation": "OFF"}}),
+        )
+        .await;
+    harness
+        .mount_records(
+            records_filter(),
+            json!([{"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z", "endTime": "2026-11-17T01:20:00Z"}]),
+        )
+        .await;
+    let document = |state: &str| json!([{"state": state, "startTime": "2026-11-17T01:00:05Z", "endTime": "2026-11-17T01:20:00Z", "docsDestination": {"document": "DOC1"}}]);
+    harness
+        .mount_collection(
+            "REC1",
+            "participants",
+            json!([{"signedinUser": {"user": "users/1", "displayName": "Alice"}, "earliestStartTime": "2026-11-17T01:00:00Z", "latestEndTime": "2026-11-17T01:20:00Z"}]),
+        )
+        .await;
+    harness
+        .mount_collection(
+            "REC1",
+            "recordings",
+            json!([{"state": "FILE_GENERATED", "startTime": "2026-11-17T01:00:00Z", "endTime": "2026-11-17T01:20:00Z", "driveDestination": {"file": "FILE1"}}]),
+        )
+        .await;
+    harness
+        .mount_collection("REC1", "transcripts", document("FILE_GENERATED"))
+        .await;
+    if notes_status == 200 {
+        harness
+            .mount_collection("REC1", "smartNotes", document("FILE_GENERATED"))
+            .await;
+    } else {
+        harness
+            .mount_status(
+                "/v2/conferenceRecords/REC1/smartNotes",
+                notes_status,
+                json!({"error": {"code": notes_status, "message": "no notes access"}}),
+            )
+            .await;
+    }
+}
