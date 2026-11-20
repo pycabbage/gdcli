@@ -9,12 +9,12 @@ Priorities: startup time, resident memory, bytes transferred, number of round tr
 ## Runtime decisions
 
 - tokio `current_thread` runtime with only the `rt`, `macros` and `time` features (`time` for the overall deadline); no worker threads.
-- Independent requests are concurrent with `tokio::try_join!` on one shared hyper client: past and upcoming lookups in `calendar list` and `meet list` (both Calendar only); space lookup and conference list in `meet get`, then participants, recordings and transcripts of each conference record.
+- Independent requests are concurrent with `tokio::try_join!` on one shared hyper client: past and upcoming lookups in `calendar list` and `meet list` (both Calendar only); space lookup and conference list in `meet get`, then participants, recordings, transcripts and smart notes of each conference record (four requests per record). `meet notes` and `meet transcript` are sequential on purpose (the chain is event, record list, one artifact list per record, then one export per document; with `--tab` each document adds the tab list and the web export), because there are one to three of each and a concurrent combinator would need a new dependency.
 - The production client is HTTP/2-only (`http2_only(true)` on the hyper-util builder, ALPN `h2` on the rustls connector; every Google endpoint speaks h2), so concurrent requests are multiplexed over one TCP+TLS connection instead of each opening its own. Tests build their own protocol-negotiating client with a plain-HTTP connector for wiremock; production code uses `google::https_builder()` with the https-only connector (plain HTTP can never be reached in production). The same builder serves the OAuth token client.
 - Timeouts (constants in `src/google.rs`): 10 s TCP connect timeout on the connector, and a 120 s deadline around every command (`with_deadline`; `auth setup` and `auth login` wait for the user and are exempt, but inside `auth login` the migration and the account discovery are bounded by it), failing with `error: timed out after 120s`.
 - Every JSON request sends the `fields` partial-response parameter (the Markdown export has none); responses contain only printed fields. Responses are handled as `serde_json::Value`, with no typed models and no generated crates.
-- `calendar list` upcoming requests `maxResults=5`; past windows keep a 5 element ring buffer instead of collecting a window.
-- `docs get` writes each body frame to stdout as it arrives; the document is never held in memory. Only the error path buffers (a small JSON error body).
+- `calendar list` upcoming requests `maxResults=5`; past windows keep a 5 element ring buffer instead of collecting a window. Range mode (`--from`) stops paging as soon as `--limit` rows (default 50, at most 1000) are collected, so its requests and memory are bounded by the limit: `maxResults=min(limit, 250)` for `calendar list`, 250 for `meet list` (the Meet predicate drops most events). `--query` adds one `q` parameter to the same requests and costs nothing locally.
+- `docs get` writes each body frame to stdout as it arrives; the document is never held in memory. Only the error path buffers (a small JSON error body). `meet notes` and `meet transcript` keep the response headers of every document open (to fail before printing) and stream the bodies one after the other; each unread response buffers at most the HTTP/2 stream window of 2 MiB (5 MiB per connection, hyper's defaults); streaming itself never buffers a document. Limit: with four or more documents of about 1.7 MB or more, or more than about 100 concurrently open streams, the window or the server's stream limit could stall the first document until the 120 s deadline; real meetings have one to three documents, and the code is not hardened against it.
 - Rendering writes directly into the caller's `impl Write`.
 - Dependencies are pulled with default features off (clap, tokio, hyper-rustls, hyper-util, time, yup-oauth2). Only `auth login` and `auth setup` open a listening socket or start a browser flow.
 - Directories are created only when something is written (`auth login`, `auth setup` and the one-time migration create the data and `accounts/` directories; no other command creates any).
@@ -61,6 +61,16 @@ Measured on 2026-11-19 and 2026-11-20 from the GitHub release assets (`gh releas
 | aarch64 archive | 1,778,208 bytes | 1,781,669 bytes | +3,461 bytes, +0.19 % |
 
 All binary deltas are below +5 %. The threshold above is defined against the local `cargo build` baseline (3,661,096); here it is applied to the release-to-release delta of two `cargo zigbuild` builds, not to that figure. The local figures 3,816,200 bytes (feature commit `ac3a51c`, `Cargo.toml` version 0.2.0) and 3,816,264 bytes (`v0.3.0` tag, version 0.3.0) are `cargo build --release` sizes; the shipped sizes in this section are `cargo zigbuild` sizes of the release workflow. Both builds are stripped by the release profile and are built differently (`cargo build` versus `cargo zigbuild`), so the two kinds of figures are never compared with each other.
+
+## Version 0.4.0 work packages (local `cargo build --release --locked`, rustc 1.100.0)
+
+| State | x86_64 binary | Delta |
+|---|---|---|
+| `v0.3.0` tag | 3,816,264 bytes | baseline |
+| accounts and the `auth` group (work package 1) | 3,872,504 bytes | +56,240 bytes, +1.47 % against `v0.3.0` |
+| scenario features (work package 2: attachments, smart notes, range mode and `--query`, `meet notes`, `meet transcript`) | 3,913,408 bytes | +40,904 bytes against work package 1, +97,144 bytes, +2.55 % against `v0.3.0` |
+
+`cargo zigbuild --target aarch64-unknown-linux-gnu --release --locked` of work package 2: 3,353,528 bytes (the shipped `v0.3.0` aarch64 binary is 3,268,400 bytes: +85,128 bytes, +2.60 %; both are zigbuild sizes). No dependency was added: the normal tree still has 121 unique packages. Requests: `meet get` sends one more Meet request per conference record (smart notes, four per record instead of three); `calendar list` and `meet list` send the same requests as before plus an optional `q`, and range mode sends one request per 250 events read until the limit is reached.
 
 ## Not done on purpose
 

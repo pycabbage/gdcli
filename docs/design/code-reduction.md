@@ -112,3 +112,42 @@ Before: `src/` 1591, `tests/` 4160 (non-blank, after `cargo fmt`). After: `src/`
 | 51 | path resolution through a `resolve` function so that `update` never needs `HOME` | not measured separately (inside the +10 of `lib.rs`) | kept |
 | 52 | `auth login` reads the client secret before it creates `accounts/` (review fix) | src 0 (two lines swapped) | kept: a failing login creates nothing |
 
+## Wave 8: scenario features (v0.4.0, work package 2)
+
+Before: `src/` 1899, `tests/` 5237 (non-blank, after `cargo fmt`). After: `src/` 2126 (+227), `tests/` 7016 (+1,779: `tests/range.rs` 558 and `tests/meet_read.rs` 558 non-blank lines, 41 new tests in all; `rustfmt` puts every long argument list and every array of command lines on its own lines, which is most of the growth). Per file (`src/`, before to after): `cli.rs` 126 to 189 (+63: `moment`, `query_text`, four options with their `rustfmt`-expanded attributes, `check`, `ReadArgs`, two commands), `events.rs` 190 to 239 (+49: `Window`, `first`, `attachments`, range mode, the `when` decision per row), `docs.rs` 171 to 177 (+6: `response` and `copy` split out of `get`, two imports), `calendar.rs` 69 to 64 (-5: `each` moved to `events.rs`), `lib.rs` 76 to 86 (+10: two `check()` calls, two read arms), `meet.rs` 195 to `meet/` 299 (+104: `mod.rs` 54, `records.rs` 179, `read.rs` 66). The plan estimated +200 for `src/`; the difference is the `rustfmt` layout of attribute lists, struct literals and the 5-tuples of `ARTIFACTS`.
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 53 | `upcoming()` replaced by `first()`, one function for the upcoming side of the default mode and for range mode (the caller adds `!has_ended` as part of the predicate) | not measured separately (a second collector with the same body was never written) | kept |
+| 54 | rows take `when` from the event (`has_ended`) instead of from the list they come from, so one loop renders default and range mode | not measured separately (the nested loop over the two lists is gone) | kept |
+| 55 | one `document` mapper for `transcripts` and `smartNotes` (both are `{state, startTime, endTime, docsDestination/document}`) instead of a separate `smart_note` function | not measured separately (the mapper exists once) | kept |
+| 56 | `each` moved from `calendar.rs` to `events.rs` and `attachments` written once on top of it for `calendar get` and `meet get` | `calendar.rs` -5 (measured), the body reappears in `events.rs` with `attachments` on top | kept |
+| 57 | `Window { from, to, query }` instead of three more positional parameters of `pages` (the signature stays under clippy's argument limit) | not measured separately (the struct plus three literals that `rustfmt` lays out on five lines each) | kept |
+| 58 | `ARTIFACTS` entries are 5-tuples (collection, record key, `fields`, page size, mapper) because the Meet collection `smartNotes` is the JSON key `smart_notes` | not measured separately (the tuples are longer, no helper function) | kept |
+| 59 | `docs::get` split into `response` and `copy` so that `meet notes` and `meet transcript` reuse the export (one function body moved, nothing duplicated) | `docs.rs` +6 | kept |
+| 60 | `meet.rs` (about 295 lines with the new code) split into `meet/mod.rs`, `records.rs` and `read.rs` by responsibility (commands, shared Meet resources, the two read commands) | largest module of the repository stays `events.rs` (239 non-blank lines); `records.rs` 179 | kept |
+| 61 | `--to` and `--limit` get `conflicts_with_all = ["past", "upcoming"]` besides `requires = "from"`: clap does not report the missing `--from` when a conflicting option is present, so `--past 3 --to X` would have parsed and ignored `--to` (found by `to_and_limit_require_from`) | +2 attribute lines | kept |
+| 62 | a `Harness` helper `mount_doc`, `mount_collection` and `mount_records` in `tests/common` instead of per-file copies (the `mount_records` of `tests/meet.rs` moved) | not measured separately (`tests/common` grew by 52 non-blank lines in all, with the new builders) | kept |
+| 63 | the review nits of the accounts test (a mode-restoring drop guard, two closures instead of the half-vacuous `denied`, distinct skip messages) | tests +14, no test added | kept |
+
+## Wave 9: review fixes of the scenario features (v0.4.0, work package 2)
+
+Before: `src/` 2126, `tests/` 7016 (non-blank, after `cargo fmt`). After: `src/` 2133 (+7), `tests/` 7032 (+16); no test was added (236 tests). Per file: `cli.rs` 189 to 191 (+2), `lib.rs` 86 to 84 (-2), `meet/read.rs` 66 to 73 (+7), `tests/range.rs` 558 to 550 (-8), `tests/meet_read.rs` 558 to 582 (+24).
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 64 | `ListArgs::check` compares `unix_timestamp()` values: the request carries whole seconds, so `00:00:00.1Z` to `00:00:00.9Z` is an empty range (`timeMin == timeMax`, a Calendar 400) and is now rejected by the same message | `cli.rs` +2 (the expression no longer fits one line); `tests/range.rs` +18 for three more rows of `check_rejects_from_not_before_to_and_equal_bounds` | kept |
+| 65 | `meet::notes` and `meet::transcript` take the parsed `ReadArgs`; `read`, `NOTES` and `TRANSCRIPT` became private; the `lib.rs` arms lost the shadowing `(google, tab)` tuple, so the choice of the constant and the `--tab` pass-through are now covered by tests | `read.rs` +7, `lib.rs` -2; `tests/meet_read.rs` +24 (`read_args` parses a real command line; the `--tab` case of the single-document test also runs `meet transcript`) | kept |
+| 66 | `day_event(id, title, day, hour)` in `tests/range.rs` replaces the `titled(..)` literals of the two `query_*` tests with the same events | `tests/range.rs` -26 (576 to 550 non-blank), the same assertions | kept |
+| 67 | the two non-ASCII literals added by the scenario tests became `\u{..}` escapes | 0 lines | kept |
+
+## Wave 10: corrections from the real-credential run (v0.4.0, work package 2)
+
+Before: `src/` 2133, `tests/` 7032 (non-blank, after `cargo fmt`). After: `src/` 2131 (-2), `tests/` 7032 (0); 236 tests, binary sizes unchanged (3,913,408 bytes x86_64, 3,353,528 bytes aarch64 zigbuild, the same as before the change).
+
+| # | Experiment | Delta | Result |
+|---|---|---|---|
+| 68 | the `no conference record` message says what Meet does (a record exists from the start of a meeting until 30 days after it) instead of "records expire 30 days after the meeting", which misled for an upcoming meeting; one string in `meet/read.rs`, one constant in `tests/meet_read.rs`, the skill drafts and `commands.md` follow | 0 lines | kept |
+| 69 | the `docs get` help text no longer says that the tabs are "concatenated with nothing between them": the whole export is not the byte concatenation of the tab exports (29,559 B against 9,451 B plus 20,557 B in the live check), and `rustfmt` then puts the attribute on one line | `cli.rs` -2 | kept |
+| 70 | documentation only: Gemini notes documents have one or two tabs, titles are localized, the real-credential results are recorded in `testing.md` | 0 lines of code | kept |
+

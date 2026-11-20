@@ -10,16 +10,19 @@ gdcli auth login         OAuth login flow only (setup without the wizard part): 
 gdcli auth list          list the logged-in accounts and mark the default
 gdcli auth set-default <email> make an account the default
 gdcli meet list          latest 10 Google Meet meetings (default past 5, future 5; --past N --upcoming N, alias --future)
-gdcli meet get <id>      show Meet meeting info
+gdcli meet get <id>      show Meet meeting info, attachments and Gemini smart notes
+gdcli meet notes <id>    print a meeting's Gemini notes as Markdown; --tab <id|name> selects one tab
+gdcli meet transcript <id> print a meeting's transcript as Markdown; --tab <id|name> selects one tab
 gdcli calendar list      latest 10 calendar events (default past 5, future 5; --past N --upcoming N, alias --future)
-gdcli calendar get <id>  get and show an event
+gdcli calendar get <id>  get and show an event with attachments
 gdcli docs get <id>      get a Google Doc as Markdown; --tab <id|name> selects one tab
 gdcli docs metadata <id> metadata of a Google Doc
 gdcli update             update gdcli from the latest GitHub release
 ```
 
-- `--json` (same information as JSON) exists on meet/calendar list and get and on `docs metadata`, never on `docs get`.
-- `--account <email>` (`-a`) exists on every command that talks to Google (all `meet`, `calendar` and `docs` subcommands) and nowhere else (not on `auth *`, `update`); without it the default account is used, and the first login becomes the default.
+- `--json` (same information as JSON) exists on meet/calendar list and get and on `docs metadata`, never on `docs get`, `meet notes` or `meet transcript` (Markdown exports).
+- `--account <email>` (`-a`) exists on every command that talks to Google (all `meet`, `calendar` and `docs` subcommands, eight leaves) and nowhere else (not on `auth *`, `update`); without it the default account is used, and the first login becomes the default.
+- `meet list` and `calendar list` also take `--from TIME [--to TIME] [--query TEXT] [--limit N]` (range mode, oldest first; `--to` and `--limit` need `--from`; `--query` also works without `--from`); details in `docs/design/commands.md`.
 - `docs get`: use an official Markdown-output API if one exists, otherwise write own Markdown conversion. Option `--json` (raw JSON output) exists only if no official Markdown API exists and raw JSON is available; otherwise drop the option.
 - Current decision: Drive `files.export` with `text/markdown` is the official Markdown API, so `docs get` has NO `--json`.
 

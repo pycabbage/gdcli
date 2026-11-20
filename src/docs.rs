@@ -2,9 +2,11 @@ use crate::events::text;
 use crate::google::{ApiError, Google};
 use crate::output::{compact, record};
 use anyhow::{Result, bail, ensure};
+use http::Response;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::io::Write;
+use yup_oauth2::hyper::body::Incoming;
 
 const DOCUMENT: &str = "application/vnd.google-apps.document";
 const TAB: &str = "tabProperties(tabId,title,index,parentTabId,nestingLevel)";
@@ -89,25 +91,22 @@ pub fn resolve_tab(tabs: &[Value], wanted: &str) -> Result<String> {
     )
 }
 
-pub async fn get(
-    google: &Google,
-    input: &str,
-    tab: Option<&str>,
-    out: &mut impl Write,
-) -> Result<()> {
-    let id = document_id(input);
-    let response = match tab {
+pub async fn response(google: &Google, id: &str, tab: Option<&str>) -> Result<Response<Incoming>> {
+    match tab {
         None => {
             let query = [("mimeType", "text/markdown")];
             google
                 .send(&google.drive, &["files", id, "export"], &query)
-                .await?
+                .await
         }
         Some(wanted) => {
             let tab_id = resolve_tab(&tabs(google, id).await?, wanted)?;
-            google.export_tab(id, &tab_id).await?
+            google.export_tab(id, &tab_id).await
         }
-    };
+    }
+}
+
+pub async fn copy(response: Response<Incoming>, out: &mut impl Write) -> Result<()> {
     let mut body = response.into_body();
     while let Some(frame) = body.frame().await {
         if let Ok(data) = frame?.into_data() {
@@ -115,6 +114,15 @@ pub async fn get(
         }
     }
     Ok(())
+}
+
+pub async fn get(
+    google: &Google,
+    input: &str,
+    tab: Option<&str>,
+    out: &mut impl Write,
+) -> Result<()> {
+    copy(response(google, document_id(input), tab).await?, out).await
 }
 
 fn person(value: &Value) -> Value {

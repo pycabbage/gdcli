@@ -1,5 +1,6 @@
 mod common;
 
+use gdcli::cli::moment;
 use gdcli::docs::document_id;
 use gdcli::events::{meeting_code, render_time, stamp, stamp_millis};
 use gdcli::output::{compact, record, table};
@@ -301,6 +302,8 @@ async fn google_commands_report_the_path_error() {
         &["calendar", "get", "e"],
         &["meet", "list"],
         &["meet", "get", "e"],
+        &["meet", "notes", "e"],
+        &["meet", "transcript", "e"],
         &["docs", "get", "X"],
         &["docs", "metadata", "X"],
         &["auth", "setup"],
@@ -317,6 +320,50 @@ async fn google_commands_report_the_path_error() {
             gdcli::message(&error),
             "cannot resolve XDG config home: x",
             "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn moment_parses_dates_and_rfc3339() {
+    for (text, expected) in [
+        ("2026-11-20", "2026-11-20T00:00:00Z"),
+        ("2028-02-29", "2028-02-29T00:00:00Z"),
+        ("2026-11-20T00:00:00Z", "2026-11-20T00:00:00Z"),
+        ("2026-11-20T00:00:00+09:00", "2026-11-19T15:00:00Z"),
+        ("2026-11-20T10:00:00-05:00", "2026-11-20T15:00:00Z"),
+        ("2026-11-20T10:00:00.250Z", "2026-11-20T10:00:00.25Z"),
+    ] {
+        assert_eq!(moment(text).unwrap(), at(expected), "{text}");
+    }
+    assert_eq!(moment("2026-11-20").unwrap().offset().whole_seconds(), 0);
+}
+
+#[test]
+fn moment_rejects_calendar_nonsense() {
+    for text in [
+        "2026-11-31",
+        "2026-02-29",
+        "2026-13-01",
+        "2026-00-10",
+        "2026-11-00",
+        "2026-1-5",
+        "20261120",
+        "",
+        "x",
+        "2026-11-20 10:00:00",
+        "2026-11-20T10:00:00",
+        "2026-11-20T25:00:00Z",
+        "2026-11-20T10:60:00Z",
+        "2026/11/20",
+        "2026-11-2a",
+        " 2026-11-20",
+        "\u{ff12}\u{ff10}\u{ff12}\u{ff16}-11-20",
+    ] {
+        assert_eq!(
+            moment(text).unwrap_err(),
+            "use YYYY-MM-DD or RFC 3339",
+            "{text:?}"
         );
     }
 }

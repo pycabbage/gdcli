@@ -1,5 +1,23 @@
 use crate::auth::accounts::Email;
 use clap::{Args, Parser, Subcommand};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+pub fn moment(value: &str) -> Result<OffsetDateTime, String> {
+    let full = if value.len() == 10 {
+        format!("{value}T00:00:00Z")
+    } else {
+        value.to_owned()
+    };
+    OffsetDateTime::parse(&full, &Rfc3339).map_err(|_| "use YYYY-MM-DD or RFC 3339".to_owned())
+}
+
+fn query_text(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("invalid query: it must not be blank".to_owned());
+    }
+    Ok(value.to_owned())
+}
 
 fn event_id(value: &str) -> Result<String, String> {
     if value.is_empty() || matches!(value, "." | "..") || value.contains(['/', '?', '#', '%']) {
@@ -64,10 +82,43 @@ pub struct ListArgs {
     pub past: u16,
     #[arg(long, visible_alias = "future", default_value_t = 5, value_parser = clap::value_parser!(u16).range(0..=1000), help = "How many upcoming items to fetch (0 skips them)")]
     pub upcoming: u16,
+    #[arg(
+        long,
+        value_name = "TIME",
+        value_parser = moment,
+        conflicts_with_all = ["past", "upcoming"],
+        help = "Range mode: only events ending after this time (YYYY-MM-DD is 00:00 UTC, or RFC 3339)"
+    )]
+    pub from: Option<OffsetDateTime>,
+    #[arg(
+        long,
+        value_name = "TIME",
+        value_parser = moment,
+        requires = "from",
+        conflicts_with_all = ["past", "upcoming"],
+        help = "Only events starting before this time (same formats)"
+    )]
+    pub to: Option<OffsetDateTime>,
+    #[arg(long, value_parser = query_text, help = "Free-text Calendar search (title, description, location, people)")]
+    pub query: Option<String>,
+    #[arg(long, requires = "from", conflicts_with_all = ["past", "upcoming"], value_parser = clap::value_parser!(u16).range(1..=1000), help = "First N matches, oldest first (range mode, default 50)")]
+    pub limit: Option<u16>,
     #[arg(long, help = "Print JSON instead of text")]
     pub json: bool,
     #[command(flatten)]
     pub account: AccountArg,
+}
+
+impl ListArgs {
+    pub fn check(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.from
+                .zip(self.to)
+                .is_none_or(|(from, to)| from.unix_timestamp() < to.unix_timestamp()),
+            "invalid range: --from must be earlier than --to"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -76,6 +127,16 @@ pub struct GetArgs {
     pub id: String,
     #[arg(long, help = "Print JSON instead of text")]
     pub json: bool,
+    #[command(flatten)]
+    pub account: AccountArg,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ReadArgs {
+    #[arg(help = "Event id from `meet list` or `calendar list`", value_parser = event_id)]
+    pub id: String,
+    #[arg(long, value_parser = tab_name, help = "Only this tab, given by tab id (t.abc) or tab title")]
+    pub tab: Option<String>,
     #[command(flatten)]
     pub account: AccountArg,
 }
@@ -103,6 +164,14 @@ pub enum MeetCommand {
     List(ListArgs),
     #[command(about = "Show a meeting with its space settings, conferences and artifacts")]
     Get(GetArgs),
+    #[command(
+        about = "Print the Gemini notes document of a meeting as Markdown (without --tab all tabs)"
+    )]
+    Notes(ReadArgs),
+    #[command(
+        about = "Print the transcript document of a meeting as Markdown (without --tab all tabs)"
+    )]
+    Transcript(ReadArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -115,9 +184,7 @@ pub enum CalendarCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum DocsCommand {
-    #[command(
-        about = "Print a Google Doc as Markdown (without --tab all tabs, concatenated with nothing between them)"
-    )]
+    #[command(about = "Print a Google Doc as Markdown (without --tab all tabs in one export)")]
     Get {
         #[arg(help = "Document id or docs.google.com URL", value_parser = document_id)]
         id: String,

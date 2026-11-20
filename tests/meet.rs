@@ -1,19 +1,16 @@
 mod common;
 
-use common::{EVENT_TYPES, EVENTS_PATH, Harness, at, event, meet_event, now, text};
+use common::{
+    CODE, EVENT_FIELDS, EVENT_TYPES, EVENTS_PATH, Harness, RECORDS_FIELDS, at, event, meet_event,
+    now, records_filter, text,
+};
 use gdcli::meet;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use wiremock::matchers::{header, method, path, query_param};
-use wiremock::{Mock, ResponseTemplate};
 
 const HEADER: &str = "id\twhen\tstart\tend\tmeeting_code\tsummary";
 const LIST_FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,conferenceData(conferenceId,conferenceSolution(key(type))))";
-const EVENT_FIELDS: &str =
-    "id,summary,start,end,conferenceData(conferenceId,conferenceSolution(key(type)))";
 const SPACE_FIELDS: &str = "config(accessType,entryPointAccess,moderation)";
-const RECORDS_FIELDS: &str = "conferenceRecords(name,startTime,endTime)";
-const CODE: &str = "abc-defg-hij";
 
 async fn list_output(harness: &Harness) -> String {
     let mut out = Vec::new();
@@ -275,22 +272,6 @@ async fn mount_meeting(harness: &Harness) {
         .await;
 }
 
-fn records_filter() -> &'static str {
-    "space.meeting_code = \"abc-defg-hij\" AND start_time>=\"2026-11-17T00:00:00.000Z\" AND start_time<=\"2026-11-17T03:00:00.000Z\""
-}
-
-async fn mount_records(harness: &Harness, filter: &str, records: Value) {
-    Mock::given(method("GET"))
-        .and(header("authorization", common::BEARER))
-        .and(path("/v2/conferenceRecords"))
-        .and(query_param("filter", filter))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"conferenceRecords": records})),
-        )
-        .mount(&harness.server)
-        .await;
-}
-
 async fn mount_artifacts(harness: &Harness, record: &str, participants: Value) {
     harness
         .mount_json(
@@ -308,6 +289,12 @@ async fn mount_artifacts(harness: &Harness, record: &str, participants: Value) {
         .mount_json(
             &format!("/v2/conferenceRecords/{record}/transcripts"),
             json!({"transcripts": [{"state": "ENDED", "docsDestination": {"document": format!("DOC-{record}")}}]}),
+        )
+        .await;
+    harness
+        .mount_json(
+            &format!("/v2/conferenceRecords/{record}/smartNotes"),
+            json!({}),
         )
         .await;
 }
@@ -348,6 +335,11 @@ async fn assert_meet_requests(harness: &Harness) {
                 "transcripts(state,startTime,endTime,docsDestination/document)",
                 "100",
             ),
+            (
+                "smartNotes",
+                "smartNotes(state,startTime,endTime,docsDestination/document)",
+                "100",
+            ),
         ] {
             let requests = harness
                 .requests(&format!("/v2/conferenceRecords/{record}/{kind}"))
@@ -363,8 +355,8 @@ async fn assert_meet_requests(harness: &Harness) {
 async fn get_prints_event_space_and_every_conference_oldest_first() {
     let harness = Harness::start().await;
     mount_meeting(&harness).await;
-    mount_records(
-        &harness,
+    harness
+        .mount_records(
         records_filter(),
         json!([
             {"name": "conferenceRecords/REC2", "startTime": "2026-11-17T01:30:00Z"},
@@ -436,11 +428,212 @@ async fn get_prints_event_space_and_every_conference_oldest_first() {
     common::assert_same_information(&text, &json);
 }
 
+const NOTE_FIELDS: &str = "smartNotes(state,startTime,endTime,docsDestination/document)";
+
+async fn mount_other_artifacts(harness: &Harness, record: &str) {
+    for kind in ["participants", "recordings", "transcripts"] {
+        harness.mount_collection(record, kind, json!([])).await;
+    }
+}
+
+async fn mount_two_records(harness: &Harness) {
+    mount_meeting(harness).await;
+    harness
+        .mount_records(
+            records_filter(),
+            json!([
+                {"name": "conferenceRecords/REC2", "startTime": "2026-11-17T01:30:00Z"},
+                {"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z"}
+            ]),
+        )
+        .await;
+    mount_other_artifacts(harness, "REC1").await;
+    mount_other_artifacts(harness, "REC2").await;
+}
+
+#[tokio::test]
+async fn smart_notes_appear_per_conference_with_the_exact_request() {
+    let harness = Harness::start().await;
+    mount_two_records(&harness).await;
+    harness
+        .mount_collection(
+            "REC1",
+            "smartNotes",
+            json!([
+                {"state": "FILE_GENERATED", "startTime": "2026-11-17T01:00:09Z", "endTime": "2026-11-17T01:20:00Z", "docsDestination": {"document": "NOTES1"}},
+                {"state": "ENDED", "startTime": "2026-11-17T01:21:00Z"}
+            ]),
+        )
+        .await;
+    harness
+        .mount_collection(
+            "REC2",
+            "smartNotes",
+            json!([{"state": "STARTED", "startTime": "2026-11-17T01:31:00Z"}]),
+        )
+        .await;
+    let text = get_output(&harness, "evt1").await.unwrap();
+    assert!(
+        text.ends_with(
+            "conference: id=REC1 start=2026-11-17T01:00:00Z\n\
+             smart_note: state=FILE_GENERATED start=2026-11-17T01:00:09Z end=2026-11-17T01:20:00Z document_id=NOTES1\n\
+             smart_note: state=ENDED start=2026-11-17T01:21:00Z\n\
+             conference: id=REC2 start=2026-11-17T01:30:00Z\n\
+             smart_note: state=STARTED start=2026-11-17T01:31:00Z\n"
+        ),
+        "{text}"
+    );
+    for record in ["REC1", "REC2"] {
+        let requests = harness
+            .requests(&format!("/v2/conferenceRecords/{record}/smartNotes"))
+            .await;
+        assert_eq!(requests.len(), 1, "{record}");
+        assert_eq!(requests[0]["fields"], NOTE_FIELDS);
+        assert_eq!(requests[0]["pageSize"], "100");
+    }
+    let mut out = Vec::new();
+    meet::get(&harness.api, "evt1", true, &mut out)
+        .await
+        .unwrap();
+    let json = common::text(out);
+    assert!(
+        json.contains(r#""smart_notes":[{"state":"FILE_GENERATED","start":"2026-11-17T01:00:09Z","end":"2026-11-17T01:20:00Z","document_id":"NOTES1"},{"state":"ENDED","start":"2026-11-17T01:21:00Z"}]"#),
+        "{json}"
+    );
+    common::assert_same_information(&text, &json);
+}
+
+#[tokio::test]
+async fn smart_notes_403_is_tolerated_like_other_artifacts() {
+    for (status, message) in [
+        (403, "no notes access"),
+        (404, "Requested entity was not found."),
+    ] {
+        let harness = Harness::start().await;
+        mount_meeting(&harness).await;
+        harness
+            .mount_records(
+                records_filter(),
+                json!([{"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z"}]),
+            )
+            .await;
+        for kind in ["participants", "transcripts"] {
+            harness.mount_collection("REC1", kind, json!([])).await;
+        }
+        harness
+            .mount_collection(
+                "REC1",
+                "recordings",
+                json!([{"state": "ENDED", "driveDestination": {"file": "F1"}}]),
+            )
+            .await;
+        harness
+            .mount_status(
+                "/v2/conferenceRecords/REC1/smartNotes",
+                status,
+                json!({"error": {"code": status, "message": message}}),
+            )
+            .await;
+        let output = get_output(&harness, "evt1").await.unwrap();
+        assert!(
+            output.contains(
+                "conference: id=REC1 start=2026-11-17T01:00:00Z\nrecording: state=ENDED drive_file=F1\n"
+            ),
+            "{output}"
+        );
+        assert!(!output.contains("smart_note"), "{output}");
+        assert!(
+            output.ends_with(&format!("meet_api: unavailable ({status} {message})\n")),
+            "{output}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn attachments_appear_in_meet_get_with_the_new_mask() {
+    let harness = Harness::start().await;
+    let mut value = meet_event("evt1", CODE, "2026-11-17T01:00:00Z", "2026-11-17T02:00:00Z");
+    value["attachments"] = json!([
+        {"fileUrl": "https://docs.google.com/document/d/1AbCdEf/edit", "title": "Notes by Gemini", "mimeType": "application/vnd.google-apps.document", "fileId": "1AbCdEf", "iconLink": "https://x.example/i.png"},
+        {"title": "Agenda", "mimeType": "application/pdf"}
+    ]);
+    harness
+        .mount_json(&format!("{EVENTS_PATH}/evt1"), value)
+        .await;
+    harness
+        .mount_json(
+            &format!("/v2/spaces/{CODE}"),
+            json!({"config": {"moderation": "OFF"}}),
+        )
+        .await;
+    harness.mount_records(records_filter(), json!([])).await;
+    let text = get_output(&harness, "evt1").await.unwrap();
+    assert!(
+        text.ends_with(
+            "moderation: OFF\n\
+             attachment: title=\"Notes by Gemini\" mime_type=application/vnd.google-apps.document file_id=1AbCdEf\n\
+             attachment: title=Agenda mime_type=application/pdf\n\
+             conference: none\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("fileUrl") && !text.contains("x.example"));
+    let mut out = Vec::new();
+    meet::get(&harness.api, "evt1", true, &mut out)
+        .await
+        .unwrap();
+    let json = common::text(out);
+    assert!(
+        json.contains(r#""moderation":"OFF","attachments":[{"title":"Notes by Gemini","mime_type":"application/vnd.google-apps.document","file_id":"1AbCdEf"},{"title":"Agenda","mime_type":"application/pdf"}],"conferences":[]"#),
+        "{json}"
+    );
+    common::assert_same_information(&text, &json);
+    assert_eq!(
+        harness.requests(&format!("{EVENTS_PATH}/evt1")).await[0]["fields"],
+        EVENT_FIELDS
+    );
+}
+
+#[tokio::test]
+async fn no_smart_notes_means_no_key() {
+    let harness = Harness::start().await;
+    mount_meeting(&harness).await;
+    harness
+        .mount_records(
+            records_filter(),
+            json!([{"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z"}]),
+        )
+        .await;
+    mount_other_artifacts(&harness, "REC1").await;
+    harness
+        .mount_collection("REC1", "smartNotes", json!([]))
+        .await;
+    let text = get_output(&harness, "evt1").await.unwrap();
+    assert!(
+        text.ends_with("moderation: OFF\nconference: id=REC1 start=2026-11-17T01:00:00Z\n"),
+        "{text}"
+    );
+    let mut out = Vec::new();
+    meet::get(&harness.api, "evt1", true, &mut out)
+        .await
+        .unwrap();
+    let json = common::text(out);
+    assert!(!json.contains("smart_note"), "{json}");
+    assert!(!json.contains("attachments"), "{json}");
+    assert_eq!(
+        harness
+            .requests("/v2/conferenceRecords/REC1/smartNotes")
+            .await
+            .len(),
+        2
+    );
+}
+
 #[tokio::test]
 async fn get_without_conference_records_prints_the_event_and_space_only() {
     let harness = Harness::start().await;
     mount_meeting(&harness).await;
-    mount_records(&harness, records_filter(), json!([])).await;
+    harness.mount_records(records_filter(), json!([])).await;
     let output = get_output(&harness, "evt1").await.unwrap();
     assert!(
         output.ends_with("moderation: OFF\nconference: none\n"),
@@ -461,7 +654,9 @@ async fn get_for_an_all_day_event_filters_by_meeting_code_only() {
     harness
         .mount_json(&format!("/v2/spaces/{CODE}"), json!({}))
         .await;
-    mount_records(&harness, "space.meeting_code = \"abc-defg-hij\"", json!([])).await;
+    harness
+        .mount_records("space.meeting_code = \"abc-defg-hij\"", json!([]))
+        .await;
     let output = get_output(&harness, "day1").await.unwrap();
     assert!(
         output.contains("start: 2026-11-20\nend: 2026-11-21\n"),
@@ -532,7 +727,7 @@ async fn get_tolerates_meet_403_and_404_with_a_single_line() {
                 json!({"error": {"code": status, "message": message}}),
             )
             .await;
-        mount_records(&harness, records_filter(), json!([])).await;
+        harness.mount_records(records_filter(), json!([])).await;
         assert_eq!(
             get_output(&harness, "evt1").await.unwrap(),
             format!(
@@ -591,12 +786,12 @@ async fn get_fails_on_other_meet_errors_without_printing_anything() {
 async fn get_prints_what_arrived_when_one_artifact_call_is_forbidden() {
     let harness = Harness::start().await;
     mount_meeting(&harness).await;
-    mount_records(
-        &harness,
-        records_filter(),
-        json!([{"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z"}]),
-    )
-    .await;
+    harness
+        .mount_records(
+            records_filter(),
+            json!([{"name": "conferenceRecords/REC1", "startTime": "2026-11-17T01:00:00Z"}]),
+        )
+        .await;
     harness
         .mount_status(
             "/v2/conferenceRecords/REC1/participants",
@@ -612,6 +807,9 @@ async fn get_prints_what_arrived_when_one_artifact_call_is_forbidden() {
         .await;
     harness
         .mount_json("/v2/conferenceRecords/REC1/transcripts", json!({}))
+        .await;
+    harness
+        .mount_json("/v2/conferenceRecords/REC1/smartNotes", json!({}))
         .await;
     let output = get_output(&harness, "evt1").await.unwrap();
     assert!(

@@ -2,7 +2,7 @@ use crate::cli::ListArgs;
 use crate::google::Google;
 use crate::output::table;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::io::Write;
 use time::format_description::well_known::Rfc3339;
@@ -14,6 +14,7 @@ pub const MEET_HEADER: &str = "id\twhen\tstart\tend\tmeeting_code\tsummary";
 const WINDOWS_DAYS: [i64; 4] = [7, 30, 180, 730];
 const PAST_PAGE_SIZE: &str = "250";
 const MEET_MIN_PAGE_SIZE: usize = 25;
+const DEFAULT_LIMIT: u16 = 50;
 const EVENT_TYPES: [&str; 4] = ["default", "focusTime", "outOfOffice", "fromGmail"];
 const CALENDAR_FIELDS: &str = "nextPageToken,items(id,status,summary,start,end)";
 const MEET_FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,conferenceData(conferenceId,conferenceSolution(key(type))))";
@@ -23,6 +24,23 @@ pub fn text<'a>(value: &'a Value, pointer: &str) -> &'a str {
         .pointer(pointer)
         .and_then(Value::as_str)
         .unwrap_or_default()
+}
+
+pub fn each(event: &Value, pointer: &str, map: impl Fn(&Value) -> Value) -> Value {
+    event
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .map_or(Value::Null, |items| items.iter().map(map).collect())
+}
+
+pub fn attachments(event: &Value) -> Value {
+    each(event, "/attachments", |entry| {
+        json!({
+            "title": text(entry, "/title"),
+            "mime_type": text(entry, "/mimeType"),
+            "file_id": text(entry, "/fileId"),
+        })
+    })
 }
 
 pub fn meeting_code(event: &Value) -> Option<&str> {
@@ -70,34 +88,40 @@ fn has_ended(event: &Value, now: OffsetDateTime) -> bool {
     instant(event, "end").is_some_and(|end| end <= now)
 }
 
+struct Window<'a> {
+    from: OffsetDateTime,
+    to: Option<OffsetDateTime>,
+    query: Option<&'a str>,
+}
+
 async fn pages(
     google: &Google,
     fields: &str,
     page_size: &str,
-    from: OffsetDateTime,
-    to: Option<OffsetDateTime>,
+    window: Window<'_>,
     mut take: impl FnMut(Value) -> bool,
 ) -> Result<()> {
-    let (min, max) = (stamp_millis(from), to.map(stamp_millis));
+    let (min, max) = (stamp_millis(window.from), window.to.map(stamp_millis));
     let mut token = String::new();
     loop {
-        let mut query = vec![
+        let mut request = vec![
             ("singleEvents", "true"),
             ("orderBy", "startTime"),
             ("maxResults", page_size),
             ("fields", fields),
             ("timeMin", &min),
         ];
-        query.extend(EVENT_TYPES.map(|event_type| ("eventTypes", event_type)));
-        query.extend(max.as_deref().map(|max| ("timeMax", max)));
+        request.extend(EVENT_TYPES.map(|event_type| ("eventTypes", event_type)));
+        request.extend(max.as_deref().map(|max| ("timeMax", max)));
+        request.extend(window.query.map(|query| ("q", query)));
         if !token.is_empty() {
-            query.push(("pageToken", &token));
+            request.push(("pageToken", &token));
         }
         let mut page = google
             .json(
                 &google.calendar,
                 &["calendars", "primary", "events"],
-                &query,
+                &request,
             )
             .await?;
         let Value::Array(items) = page["items"].take() else {
@@ -115,11 +139,11 @@ async fn pages(
     }
 }
 
-async fn upcoming(
+async fn first(
     google: &Google,
-    now: OffsetDateTime,
     fields: &str,
     page_size: &str,
+    window: Window<'_>,
     wanted: usize,
     keep: impl Fn(&Value) -> bool,
 ) -> Result<Vec<Value>> {
@@ -127,8 +151,8 @@ async fn upcoming(
     if wanted == 0 {
         return Ok(found);
     }
-    pages(google, fields, page_size, now, None, |event| {
-        if text(&event, "/status") != "cancelled" && !has_ended(&event, now) && keep(&event) {
+    pages(google, fields, page_size, window, |event| {
+        if text(&event, "/status") != "cancelled" && keep(&event) {
             found.push(event);
         }
         found.len() < wanted
@@ -142,6 +166,7 @@ async fn past(
     now: OffsetDateTime,
     fields: &str,
     wanted: usize,
+    query: Option<&str>,
     keep: impl Fn(&Value) -> bool,
 ) -> Result<Vec<Value>> {
     let mut tail = VecDeque::with_capacity(wanted + 1);
@@ -150,8 +175,12 @@ async fn past(
             break;
         }
         tail.clear();
-        let from = now - Duration::days(days);
-        pages(google, fields, PAST_PAGE_SIZE, from, Some(now), |event| {
+        let window = Window {
+            from: now - Duration::days(days),
+            to: Some(now),
+            query,
+        };
+        pages(google, fields, PAST_PAGE_SIZE, window, |event| {
             if text(&event, "/status") != "cancelled" && has_ended(&event, now) && keep(&event) {
                 if tail.len() == wanted {
                     tail.pop_front();
@@ -176,30 +205,53 @@ pub async fn list(
     out: &mut impl Write,
 ) -> Result<()> {
     let keep = |event: &Value| !meet || meeting_code(event).is_some();
-    let (past_count, upcoming_count) = (usize::from(args.past), usize::from(args.upcoming));
     let (fields, floor, header) = if meet {
         (MEET_FIELDS, MEET_MIN_PAGE_SIZE, MEET_HEADER)
     } else {
         (CALENDAR_FIELDS, 1, CALENDAR_HEADER)
     };
-    let page_size = upcoming_count.max(floor).min(250).to_string();
-    let (past, upcoming) = tokio::try_join!(
-        past(google, now, fields, past_count, keep),
-        upcoming(google, now, fields, &page_size, upcoming_count, keep),
-    )?;
-    let mut rows = Vec::new();
-    for (when, events) in [("past", &past), ("upcoming", &upcoming)] {
-        for event in events {
-            let mut row = vec![
-                text(event, "/id").to_owned(),
-                when.to_owned(),
-                render_time(event, "start"),
-                render_time(event, "end"),
-            ];
-            row.extend(meeting_code(event).filter(|_| meet).map(str::to_owned));
-            row.push(text(event, "/summary").to_owned());
-            rows.push(row);
-        }
+    let query = args.query.as_deref();
+    let events = if let Some(from) = args.from {
+        let limit = usize::from(args.limit.unwrap_or(DEFAULT_LIMIT));
+        let page_size = if meet { 250 } else { limit.min(250) }.to_string();
+        let window = Window {
+            from,
+            to: args.to,
+            query,
+        };
+        first(google, fields, &page_size, window, limit, keep).await?
+    } else {
+        let (past_count, upcoming_count) = (usize::from(args.past), usize::from(args.upcoming));
+        let page_size = upcoming_count.max(floor).min(250).to_string();
+        let window = Window {
+            from: now,
+            to: None,
+            query,
+        };
+        let fresh = |event: &Value| !has_ended(event, now) && keep(event);
+        let (mut past, upcoming) = tokio::try_join!(
+            past(google, now, fields, past_count, query, keep),
+            first(google, fields, &page_size, window, upcoming_count, fresh),
+        )?;
+        past.extend(upcoming);
+        past
+    };
+    let mut rows = Vec::with_capacity(events.len());
+    for event in &events {
+        let when = if has_ended(event, now) {
+            "past"
+        } else {
+            "upcoming"
+        };
+        let mut row = vec![
+            text(event, "/id").to_owned(),
+            when.to_owned(),
+            render_time(event, "start"),
+            render_time(event, "end"),
+        ];
+        row.extend(meeting_code(event).filter(|_| meet).map(str::to_owned));
+        row.push(text(event, "/summary").to_owned());
+        rows.push(row);
     }
     Ok(table(out, header, &rows, args.json)?)
 }

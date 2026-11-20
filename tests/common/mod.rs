@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use wiremock::matchers::{any, header, method, path};
+use wiremock::matchers::{any, header, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 use yup_oauth2::AccessTokenAuthenticator;
 
@@ -17,6 +17,9 @@ pub const EVENTS_PATH: &str = "/calendar/v3/calendars/primary/events";
 pub const TOKEN: &str = "test-token";
 pub const EVENT_TYPES: [&str; 4] = ["default", "focusTime", "outOfOffice", "fromGmail"];
 pub const BEARER: &str = "Bearer test-token";
+pub const CODE: &str = "abc-defg-hij";
+pub const EVENT_FIELDS: &str = "id,summary,start,end,conferenceData(conferenceId,conferenceSolution(key(type))),attachments(title,mimeType,fileId)";
+pub const RECORDS_FIELDS: &str = "conferenceRecords(name,startTime,endTime)";
 
 fn local(url: &url::Url) -> bool {
     url.host_str() == Some("127.0.0.1")
@@ -26,6 +29,10 @@ pub fn args() -> ListArgs {
     ListArgs {
         past: 5,
         upcoming: 5,
+        from: None,
+        to: None,
+        query: None,
+        limit: None,
         json: false,
         account: AccountArg::default(),
     }
@@ -95,6 +102,38 @@ impl Harness {
             .await;
     }
 
+    pub async fn mount_doc(&self, id: &str, markdown: &str) {
+        Mock::given(method("GET"))
+            .and(header("authorization", BEARER))
+            .and(path(format!("/drive/v3/files/{id}/export")))
+            .and(query_param("mimeType", "text/markdown"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(markdown.to_owned(), "text/markdown"),
+            )
+            .mount(&self.server)
+            .await;
+    }
+
+    pub async fn mount_collection(&self, record: &str, kind: &str, items: Value) {
+        self.mount_json(
+            &format!("/v2/conferenceRecords/{record}/{kind}"),
+            json!({ kind: items }),
+        )
+        .await;
+    }
+
+    pub async fn mount_records(&self, filter: &str, records: Value) {
+        Mock::given(method("GET"))
+            .and(header("authorization", BEARER))
+            .and(path("/v2/conferenceRecords"))
+            .and(query_param("filter", filter))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"conferenceRecords": records})),
+            )
+            .mount(&self.server)
+            .await;
+    }
+
     pub async fn mount_calendar(&self, events: Vec<Value>) {
         Mock::given(method("GET"))
             .and(header("authorization", BEARER))
@@ -160,6 +199,16 @@ pub fn event(id: &str, start: &str, end: &str) -> Value {
     })
 }
 
+pub fn titled(id: &str, summary: &str, start: &str, end: &str) -> Value {
+    let mut value = event(id, start, end);
+    value["summary"] = json!(summary);
+    value
+}
+
+pub fn records_filter() -> &'static str {
+    "space.meeting_code = \"abc-defg-hij\" AND start_time>=\"2026-11-17T00:00:00.000Z\" AND start_time<=\"2026-11-17T03:00:00.000Z\""
+}
+
 pub fn cancelled(id: &str, start: &str, end: &str) -> Value {
     let mut value = event(id, start, end);
     value["status"] = json!("cancelled");
@@ -196,8 +245,16 @@ pub fn calendar_fake(events: Vec<Value>) -> impl Fn(&Request) -> ResponseTemplat
         let bound = |key: &str| query.get(key).map(|value| at(value));
         let time_min = bound("timeMin");
         let time_max = bound("timeMax");
+        let needle = query.get("q").map(|text| text.to_lowercase());
         let mut hits: Vec<&Value> = events
             .iter()
+            .filter(|value| {
+                needle.as_ref().is_none_or(|needle| {
+                    value["summary"]
+                        .as_str()
+                        .is_some_and(|summary| summary.to_lowercase().contains(needle))
+                })
+            })
             .filter(|value| time_min.is_none_or(|min| event_end(value) > min))
             .filter(|value| time_max.is_none_or(|max| event_start(value) < max))
             .collect();

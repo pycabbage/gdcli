@@ -1,5 +1,5 @@
 use crate::cli::ListArgs;
-use crate::events::{self, meeting_code, render_time, text, utc};
+use crate::events::{self, attachments, each, meeting_code, render_time, text, utc};
 use crate::google::Google;
 use crate::output::{compact, record};
 use anyhow::Result;
@@ -7,17 +7,10 @@ use serde_json::{Value, json};
 use std::io::Write;
 use time::OffsetDateTime;
 
-const GET_FIELDS: &str = "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,conferenceSolution(key(type)),entryPoints(entryPointType,uri))";
+const GET_FIELDS: &str = "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,conferenceSolution(key(type)),entryPoints(entryPointType,uri)),attachments(title,mimeType,fileId)";
 
 fn person(value: &Value) -> Value {
     json!({"name": text(value, "/displayName"), "email": text(value, "/email")})
-}
-
-fn each(event: &Value, pointer: &str, map: impl Fn(&Value) -> Value) -> Value {
-    event
-        .pointer(pointer)
-        .and_then(Value::as_array)
-        .map_or(Value::Null, |items| items.iter().map(map).collect())
 }
 
 fn model(event: &Value) -> Value {
@@ -50,6 +43,7 @@ fn model(event: &Value) -> Value {
         "entry_points": each(event, "/conferenceData/entryPoints", |entry| {
             json!({"type": text(entry, "/entryPointType"), "uri": text(entry, "/uri")})
         }),
+        "attachments": attachments(event),
         "created": utc(text(event, "/created")),
         "updated": utc(text(event, "/updated")),
         "description": text(event, "/description"),

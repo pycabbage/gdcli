@@ -84,6 +84,8 @@ fn missing_client_secret_points_at_setup_and_the_xdg_path() {
     for args in [
         &["calendar", "list"][..],
         &["meet", "get", "abc-defg-hij"],
+        &["meet", "notes", "abc-defg-hij"],
+        &["meet", "transcript", "abc-defg-hij"],
         &["docs", "get", "X"],
         &["auth", "login"],
     ] {
@@ -101,6 +103,56 @@ fn missing_client_secret_points_at_setup_and_the_xdg_path() {
         assert_eq!(output.stdout, b"");
         assert!(!dir.path().join("data").exists(), "{args:?}");
     }
+}
+
+#[test]
+fn an_invalid_range_is_reported_before_the_client_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        &[
+            "calendar",
+            "list",
+            "--from",
+            "2026-11-20",
+            "--to",
+            "2026-11-01",
+        ][..],
+        &["meet", "list", "--from", "2026-11-20", "--to", "2026-11-20"],
+        &[
+            "calendar",
+            "list",
+            "--from",
+            "2026-11-20T10:00:00Z",
+            "--to",
+            "2026-11-20T18:00:00+09:00",
+        ],
+    ] {
+        let output = run(&mut isolated(args, dir.path()));
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(output.stdout, b"");
+        assert_eq!(
+            stderr(&output).trim_end(),
+            "error: invalid range: --from must be earlier than --to",
+            "{args:?}"
+        );
+        assert!(!dir.path().join("data").exists());
+    }
+    let output = run(&mut isolated(
+        &[
+            "calendar",
+            "list",
+            "--from",
+            "2026-11-01",
+            "--to",
+            "2026-11-20",
+        ],
+        dir.path(),
+    ));
+    assert!(
+        stderr(&output).contains("cannot read client secret"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -126,6 +178,8 @@ fn missing_token_fails_fast_pointing_at_login_without_starting_a_flow() {
         &["calendar", "get", "e"],
         &["meet", "list"],
         &["meet", "get", "abc-defg-hij"],
+        &["meet", "notes", "abc-defg-hij"],
+        &["meet", "transcript", "abc-defg-hij"],
         &["docs", "get", "X"],
     ] {
         let output = run(&mut isolated(args, dir.path()));
@@ -349,6 +403,10 @@ fn unknown_account_names_the_known_ones_before_any_network_call() {
     };
     assert_eq!(
         message(&["calendar", "list", "-a", "Bob@Example.com"]),
+        "error: unknown account bob@example.com; known accounts: alice@example.com"
+    );
+    assert_eq!(
+        message(&["meet", "notes", "e", "-a", "bob@example.com"]),
         "error: unknown account bob@example.com; known accounts: alice@example.com"
     );
     assert_eq!(

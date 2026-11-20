@@ -99,8 +99,95 @@ async fn text_and_json_are_two_renderings_of_one_curated_record() {
     assert_eq!(requests.len(), 2);
     assert_eq!(
         requests[0]["fields"],
-        "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,conferenceSolution(key(type)),entryPoints(entryPointType,uri))"
+        "id,status,summary,description,location,start,end,htmlLink,hangoutLink,eventType,recurringEventId,recurrence,visibility,created,updated,organizer(email,displayName),creator(email,displayName),attendees(email,displayName,responseStatus,optional),conferenceData(conferenceId,conferenceSolution(key(type)),entryPoints(entryPointType,uri)),attachments(title,mimeType,fileId)"
     );
+}
+
+fn attachments() -> Value {
+    json!([
+        {"fileUrl": "https://docs.google.com/document/d/1AbCdEf/edit", "title": "Notes by Gemini",
+         "mimeType": "application/vnd.google-apps.document", "fileId": "1AbCdEf", "iconLink": "https://x.example/i.png"},
+        {"fileUrl": "https://example.com/a.pdf", "title": "Agenda", "mimeType": "application/pdf"}
+    ])
+}
+
+#[tokio::test]
+async fn attachments_render_in_text_and_json_with_the_exact_mask() {
+    let harness = Harness::start().await;
+    let mut full = event();
+    full["attachments"] = attachments();
+    harness
+        .mount_json(&format!("{EVENTS_PATH}/abc123"), full)
+        .await;
+    let json = get(&harness, "abc123", true).await;
+    let keys: Vec<String> = serde_json::from_str::<Value>(&json)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let at = |name: &str| keys.iter().position(|key| key == name).unwrap();
+    assert_eq!(at("attachments"), at("entry_points") + 1);
+    assert_eq!(at("created"), at("attachments") + 1);
+    assert!(json.contains(
+        r#""attachments":[{"title":"Notes by Gemini","mime_type":"application/vnd.google-apps.document","file_id":"1AbCdEf"},{"title":"Agenda","mime_type":"application/pdf"}]"#
+    ));
+    let text = get(&harness, "abc123", false).await;
+    assert!(
+        text.contains(
+            "entry_point: type=phone uri=tel:+1-555\n\
+             attachment: title=\"Notes by Gemini\" mime_type=application/vnd.google-apps.document file_id=1AbCdEf\n\
+             attachment: title=Agenda mime_type=application/pdf\n\
+             created: "
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("fileUrl") && !text.contains("iconLink") && !text.contains("x.example"));
+    assert_same_information(&text, &json);
+    for query in harness.requests(&format!("{EVENTS_PATH}/abc123")).await {
+        assert!(
+            query["fields"]
+                .ends_with("entryPoints(entryPointType,uri)),attachments(title,mimeType,fileId)"),
+            "{}",
+            query["fields"]
+        );
+        assert!(!query["fields"].contains("fileUrl") && !query["fields"].contains("iconLink"));
+    }
+}
+
+#[tokio::test]
+async fn no_attachments_means_no_key() {
+    let harness = Harness::start().await;
+    for (id, attachments) in [
+        ("none", Value::Null),
+        ("empty", json!([])),
+        (
+            "blank",
+            json!([{"fileUrl": "https://x.example/f", "iconLink": "https://x.example/i"}]),
+        ),
+    ] {
+        let mut value =
+            json!({"id": id, "start": {"date": "2026-11-20"}, "end": {"date": "2026-11-21"}});
+        if !attachments.is_null() {
+            value["attachments"] = attachments;
+        }
+        harness
+            .mount_json(&format!("{EVENTS_PATH}/{id}"), value)
+            .await;
+        let json = get(&harness, id, true).await;
+        assert_eq!(
+            json,
+            format!(
+                "{}\n",
+                json!({"id": id, "start": "2026-11-20", "end": "2026-11-21"})
+            ),
+            "{id}"
+        );
+        let text = get(&harness, id, false).await;
+        assert!(!text.contains("attachment"), "{text}");
+        assert_same_information(&text, &json);
+    }
 }
 
 #[tokio::test]

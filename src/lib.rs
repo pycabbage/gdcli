@@ -55,16 +55,24 @@ async fn execute(command: Command, resolve: &dyn Fn() -> Result<Paths>) -> Resul
             auth::set_default(&resolve()?, &email, &mut out).await
         }
         Command::Calendar(CalendarCommand::List(args)) => {
+            args.check()?;
             calendar::list(&google(&args.account).await?, now(), &args, &mut out).await
         }
         Command::Calendar(CalendarCommand::Get(args)) => {
             calendar::get(&google(&args.account).await?, &args.id, args.json, &mut out).await
         }
         Command::Meet(MeetCommand::List(args)) => {
+            args.check()?;
             meet::list(&google(&args.account).await?, now(), &args, &mut out).await
         }
         Command::Meet(MeetCommand::Get(args)) => {
             meet::get(&google(&args.account).await?, &args.id, args.json, &mut out).await
+        }
+        Command::Meet(MeetCommand::Notes(args)) => {
+            meet::notes(&google(&args.account).await?, &args, &mut out).await
+        }
+        Command::Meet(MeetCommand::Transcript(args)) => {
+            meet::transcript(&google(&args.account).await?, &args, &mut out).await
         }
         Command::Docs(DocsCommand::Get { id, tab, account }) => {
             docs::get(&google(&account).await?, &id, tab.as_deref(), &mut out).await

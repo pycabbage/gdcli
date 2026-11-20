@@ -11,7 +11,7 @@ use gdcli::google::{connector, https_builder};
 use serde_json::json;
 use std::io::Write;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::{NamedTempFile, TempDir};
 
 const EXPIRED_TOKEN: &str = r#"[{"scopes":["https://www.googleapis.com/auth/calendar.events.readonly","https://www.googleapis.com/auth/meetings.space.readonly","https://www.googleapis.com/auth/drive.readonly"],"token":{"access_token":"old","refresh_token":null,"expires_at":[2000,1,0,0,0,0,0,0,0],"id_token":null}}]"#;
@@ -28,6 +28,14 @@ fn mail(text: &str) -> Email {
 
 fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+struct Restore(PathBuf, u32);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.0, PermissionsExt::from_mode(self.1));
+    }
 }
 
 fn names(dir: &Path) -> Vec<String> {
@@ -187,9 +195,13 @@ fn list_reports_an_unreadable_accounts_path_and_a_pointer_that_is_a_directory() 
     std::fs::remove_dir(paths.default_account()).unwrap();
     place(&paths, "alice@example.com", "[]");
     point(&paths, "alice@example.com\n");
-    let denied = |path: &Path| {
+    let readable_dir = |path: &Path| {
         std::fs::set_permissions(path, PermissionsExt::from_mode(0o000)).unwrap();
-        std::fs::read_dir(path).is_err() && std::fs::read(path).is_err()
+        std::fs::read_dir(path).is_ok()
+    };
+    let readable_file = |path: &Path| {
+        std::fs::set_permissions(path, PermissionsExt::from_mode(0o000)).unwrap();
+        std::fs::read(path).is_ok()
     };
     let expected = |path: &Path| {
         format!(
@@ -197,21 +209,25 @@ fn list_reports_an_unreadable_accounts_path_and_a_pointer_that_is_a_directory() 
             path.display()
         )
     };
-    if denied(&paths.accounts()) {
-        assert_eq!(error_of(list(&paths)), expected(&paths.accounts()));
-    } else {
-        eprintln!("skipped: running as root");
+    {
+        let _restore = Restore(paths.accounts(), 0o700);
+        if readable_dir(&paths.accounts()) {
+            eprintln!("skipped: running as root (accounts)");
+        } else {
+            assert_eq!(error_of(list(&paths)), expected(&paths.accounts()));
+        }
     }
-    std::fs::set_permissions(paths.accounts(), PermissionsExt::from_mode(0o700)).unwrap();
-    if denied(&paths.default_account()) {
-        assert_eq!(
-            error_of(default_account(&paths)),
-            expected(&paths.default_account())
-        );
-    } else {
-        eprintln!("skipped: running as root");
+    {
+        let _restore = Restore(paths.default_account(), 0o600);
+        if readable_file(&paths.default_account()) {
+            eprintln!("skipped: running as root (pointer)");
+        } else {
+            assert_eq!(
+                error_of(default_account(&paths)),
+                expected(&paths.default_account())
+            );
+        }
     }
-    std::fs::set_permissions(paths.default_account(), PermissionsExt::from_mode(0o600)).unwrap();
 }
 
 #[test]
