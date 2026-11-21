@@ -55,7 +55,7 @@ The normal tree grows from 109 to 121 packages (+12): the five new direct crates
 
 ## Packages added by `open` (0.4.1)
 
-The normal tree grows from 121 to 124 packages (+3) and `Cargo.lock` from 160 to 163: `open` and its two transitive crates below (`libc` and `once_cell` were already locked). Measured on 2026-11-21 (crates.io API, `gh api`, sources read from the `.crate` files).
+The normal tree grows from 121 to 124 packages (+3) and `Cargo.lock` from 160 to 163: `open` and its two transitive crates below (`libc` and `once_cell` were already locked). Measured on 2026-11-21 (crates.io API, `gh api`, sources read from the `.crate` files). The `v0.4.1` tag ships exactly this: its `Cargo.lock` has 163 packages (160 at `v0.4.0`) and locks `open` 5.4.5, `is-wsl` 0.4.0 and `is-docker` 0.2.0 (the files at both tags, read on 2026-11-21).
 
 | Package | Version | Pulled by | Downloads 90 d | Stars | Owner | Last release | Verdict |
 |---|---|---|---|---|---|---|---|

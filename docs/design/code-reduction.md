@@ -55,7 +55,7 @@ Before: `src/` 1304, `tests/` 2928. After: `src/` 1323 (+19), `tests/` 3147 (+21
 | 29 | remove the old `leaves` helper (positional values) in favour of `pairs` | part of the +11 in `output.rs` (the helper was 9 lines, `pairs` and `quoted` are 20) | kept (readability is the owner's priority) |
 | 30 | drop the substring-based `every_leaf_of_the_record_appears_in_the_text` test, superseded by the line-by-line oracle | tests -14 | kept |
 
-## Wave 3c: reviewer nits
+## Wave 3c: review nits
 
 Before: `src/` 1323, `tests/` 3147. After: `src/` 1324 (+1), `tests/` 3167 (+20).
 
