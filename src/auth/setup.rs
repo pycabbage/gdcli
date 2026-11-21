@@ -6,6 +6,7 @@ use std::io::{BufRead, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use yup_oauth2::ConsoleApplicationSecret;
+use yup_oauth2::authenticator_delegate::InstalledFlowDelegate;
 
 const INSTRUCTIONS: &str = include_str!("../../docs/setup.md");
 
@@ -17,7 +18,12 @@ pub fn typed_path(answer: &str, home: Option<&Path>) -> PathBuf {
     }
 }
 
-pub async fn setup(paths: &Paths, mut input: impl BufRead, out: &mut impl Write) -> Result<()> {
+pub async fn setup(
+    paths: &Paths,
+    mut input: impl BufRead,
+    out: &mut impl Write,
+    flow: impl InstalledFlowDelegate + 'static,
+) -> Result<()> {
     let destination = paths.client_secret();
     writeln!(out, "{INSTRUCTIONS}")?;
     writeln!(out, "Destination: {}", destination.display())?;
@@ -37,7 +43,7 @@ pub async fn setup(paths: &Paths, mut input: impl BufRead, out: &mut impl Write)
     } else {
         install_client_secret(&source, &destination)?;
     }
-    login(paths, out).await
+    login(paths, out, flow).await
 }
 
 pub fn validate_client_secret(json: &[u8]) -> Result<()> {

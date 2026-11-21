@@ -8,8 +8,14 @@ const SECRET: &str = r#"{"installed":{"client_id":"id.apps.googleusercontent.com
 const EXPIRED_TOKEN: &str = r#"[{"scopes":["https://www.googleapis.com/auth/calendar.events.readonly","https://www.googleapis.com/auth/meetings.space.readonly","https://www.googleapis.com/auth/drive.readonly"],"token":{"access_token":"old","refresh_token":null,"expires_at":[2000,1,0,0,0,0,0,0,0],"id_token":null}}]"#;
 
 fn gdcli(args: &[&str], dir: &Path) -> Command {
+    let launchers = dir.join("no-launchers");
+    std::fs::create_dir_all(&launchers).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_gdcli"));
-    command.args(args).env_clear().env("HOME", dir.join("home"));
+    command
+        .args(args)
+        .env_clear()
+        .env("HOME", dir.join("home"))
+        .env("PATH", launchers);
     command
 }
 
@@ -87,7 +93,7 @@ fn missing_client_secret_points_at_setup_and_the_xdg_path() {
         &["meet", "notes", "abc-defg-hij"],
         &["meet", "transcript", "abc-defg-hij"],
         &["docs", "get", "X"],
-        &["auth", "login"],
+        &["auth", "login", "--no-browser"],
     ] {
         let output = run(&mut isolated(args, dir.path()));
         assert!(!output.status.success());
@@ -257,7 +263,7 @@ fn a_closed_stdout_exits_quietly() {
     let err = dir.path().join("stderr");
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
-    let child = gdcli(&["auth", "setup"], dir.path())
+    let child = gdcli(&["auth", "setup", "--no-browser"], dir.path())
         .env("XDG_CONFIG_HOME", dir.path().join("cfg"))
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .stdin(Stdio::null())

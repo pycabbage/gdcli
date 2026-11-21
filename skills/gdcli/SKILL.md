@@ -9,7 +9,7 @@ Agent-oriented CLI for Google Workspace (Meet, Calendar, Docs), read-only. Outpu
 
 ## Before the first command
 
-- `gdcli auth list` prints the logged-in accounts (columns `account`, `default`). With no account a human must run `gdcli auth setup` (first time) or `gdcli auth login` (more accounts): both need a browser, so do not run them yourself.
+- `gdcli auth list` prints the logged-in accounts (columns `account`, `default`). With no account a human must run `gdcli auth setup` (first time) or `gdcli auth login` (more accounts): both need a browser, so do not run them yourself. If a human asks you to run one, pass `--no-browser` (an agent that gdcli does not detect, and Claude Code before v2.1.172, would otherwise open a browser on the user's machine), give the printed URL to the human, and set `GDCLI_OPEN_BROWSER=1` only after the user has agreed to a browser opening on their machine, never on your own.
 - Every Google command takes `-a, --account <email>`; without it the default account is used.
 - Errors go to stderr as `error: <message>` with exit status 1 and an empty stdout (a document that breaks mid-stream may leave partial output); usage errors exit with 2.
 - Never read or print `client_secret.json` or the files under `$XDG_DATA_HOME/gdcli`; they hold credentials.

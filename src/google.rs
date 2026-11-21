@@ -90,7 +90,7 @@ impl Google {
         accounts::migrate(paths).await?;
         let (email, file) = accounts::token_file(paths, account)?;
         let client = https_builder().build(connector());
-        let auth = auth::authenticator(secret, &file, Some(&email), false, client.clone()).await?;
+        let auth = auth::authenticator(secret, &file, Some(&email), None, client.clone()).await?;
         Ok(Self::production(client, auth))
     }
 

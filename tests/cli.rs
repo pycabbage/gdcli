@@ -15,11 +15,11 @@ fn definition_is_consistent() {
 fn parses_every_specified_command() {
     assert!(matches!(
         parse(&["auth", "setup"]),
-        Ok(Command::Auth(AuthCommand::Setup))
+        Ok(Command::Auth(AuthCommand::Setup(_)))
     ));
     assert!(matches!(
         parse(&["auth", "login"]),
-        Ok(Command::Auth(AuthCommand::Login))
+        Ok(Command::Auth(AuthCommand::Login(_)))
     ));
     assert!(matches!(
         parse(&["auth", "list"]),
@@ -146,7 +146,6 @@ fn rejects_unspecified_flags_and_missing_arguments() {
         &["login"],
         &["set-default", "a@b.c"],
         &["auth", "setup", "--force"],
-        &["auth", "login", "--no-browser"],
         &["auth", "list", "x"],
         &["auth", "set-default"],
         &["auth", "set-default", "a@b.c", "d@e.f"],
@@ -259,6 +258,57 @@ fn account_option_exists_exactly_on_the_google_commands() {
         .collect();
     expected.sort();
     assert_eq!(found, expected);
+}
+
+#[test]
+fn no_browser_exists_on_auth_setup_and_login_only() {
+    for args in [&["auth", "setup"][..], &["auth", "login"]] {
+        let flagged: Vec<&str> = args.iter().copied().chain(["--no-browser"]).collect();
+        for (given, expected) in [(args, false), (&flagged[..], true)] {
+            match parse(given) {
+                Ok(Command::Auth(AuthCommand::Setup(login) | AuthCommand::Login(login))) => {
+                    assert_eq!(login.no_browser, expected, "{given:?}");
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+    for args in [
+        &["auth", "list", "--no-browser"][..],
+        &["auth", "set-default", "a@b.c", "--no-browser"],
+        &["update", "--no-browser"],
+        &["skills", "--no-browser"],
+        &["meet", "list", "--no-browser"],
+        &["meet", "get", "e", "--no-browser"],
+        &["meet", "notes", "e", "--no-browser"],
+        &["meet", "transcript", "e", "--no-browser"],
+        &["calendar", "list", "--no-browser"],
+        &["calendar", "get", "e", "--no-browser"],
+        &["docs", "get", "d", "--no-browser"],
+        &["docs", "metadata", "d", "--no-browser"],
+        &["auth", "login", "--no-browser=true"],
+        &["auth", "setup", "--browser"],
+    ] {
+        assert!(parse(args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn auth_help_names_the_browser_variable() {
+    for name in ["setup", "login"] {
+        let help = parse(&["auth", name, "--help"]).unwrap_err().to_string();
+        assert!(help.contains("--no-browser"), "{help}");
+        assert!(
+            help.contains("Environment: GDCLI_OPEN_BROWSER=1 opens"),
+            "{help}"
+        );
+        assert!(
+            help.contains(
+                "(the default in an AI agent shell; GDCLI_OPEN_BROWSER=1 opens it there)"
+            ),
+            "{help}"
+        );
+    }
 }
 
 #[test]

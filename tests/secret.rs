@@ -1,4 +1,5 @@
 use gdcli::Paths;
+use gdcli::auth::browser::{Launch, Terminal};
 use gdcli::auth::setup::{setup, typed_path};
 use gdcli::auth::{install_client_secret, validate_client_secret};
 use std::io::Cursor;
@@ -7,6 +8,10 @@ use std::time::Duration;
 
 const INSTALLED: &str = r#"{"installed":{"client_id":"id.apps.googleusercontent.com","client_secret":"s","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":["http://localhost"]}}"#;
 const WEB: &str = r#"{"web":{"client_id":"id","client_secret":"s","auth_uri":"a","token_uri":"t","redirect_uris":[]}}"#;
+
+fn quiet() -> Terminal<Vec<u8>, impl Fn(&str) -> std::io::Result<()> + Send + Sync + 'static> {
+    Terminal::new(Launch::Skip, Vec::new(), |_: &str| Ok(()))
+}
 
 fn mode(path: &std::path::Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
@@ -101,6 +106,7 @@ async fn setup_prints_instructions_destination_and_rejects_a_bad_path() {
         &paths,
         Cursor::new("/does/not/exist.json\n"),
         &mut out,
+        quiet(),
     ))
     .await
     .unwrap_err();
@@ -115,13 +121,13 @@ async fn setup_prints_instructions_destination_and_rejects_a_bad_path() {
 async fn setup_with_empty_answer_requires_a_valid_placed_secret() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::new(dir.path().join("config"), dir.path().join("data"));
-    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new()))
+    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new(), quiet()))
         .await
         .unwrap_err();
     assert!(gdcli::message(&error).contains("client_secret.json"));
     std::fs::create_dir_all(&paths.config).unwrap();
     std::fs::write(paths.client_secret(), WEB).unwrap();
-    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new()))
+    let error = bounded(setup(&paths, Cursor::new("\n"), &mut Vec::new(), quiet()))
         .await
         .unwrap_err();
     assert!(gdcli::message(&error).contains("Desktop app"));

@@ -269,7 +269,12 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
             .unwrap()
             .command
     };
-    for args in [&["auth", "setup"][..], &["auth", "login"]] {
+    for args in [
+        &["auth", "setup"][..],
+        &["auth", "login"],
+        &["auth", "setup", "--no-browser"],
+        &["auth", "login", "--no-browser"],
+    ] {
         assert_eq!(deadline_for(&parse(args)), None, "{args:?}");
     }
     for args in [
@@ -291,7 +296,7 @@ fn interactive_commands_have_no_deadline_and_api_commands_have_one() {
     }
     assert!(matches!(
         parse(&["auth", "login"]),
-        Command::Auth(AuthCommand::Login)
+        Command::Auth(AuthCommand::Login(_))
     ));
 }
 
@@ -309,6 +314,8 @@ async fn google_commands_report_the_path_error() {
         &["docs", "metadata", "X"],
         &["auth", "setup"],
         &["auth", "login"],
+        &["auth", "setup", "--no-browser"],
+        &["auth", "login", "--no-browser"],
         &["auth", "list"],
         &["auth", "set-default", "a@b.c"],
     ] {
@@ -380,6 +387,25 @@ fn the_product_description_is_the_first_line_of_the_readme() {
     let readme =
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
     assert_eq!(readme.lines().next(), Some(env!("CARGO_PKG_DESCRIPTION")));
+}
+
+#[test]
+fn the_readme_is_the_description_the_install_block_and_the_skills_note() {
+    let readme =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+    assert!(readme.ends_with("```\n"));
+    let blocks: Vec<&str> = readme.trim_end().split("\n\n").collect();
+    assert_eq!(blocks.len(), 4, "{readme}");
+    assert_eq!(blocks[0], env!("CARGO_PKG_DESCRIPTION"));
+    let install = blocks[1].strip_prefix("```sh\n").unwrap();
+    let install = install.strip_suffix("\n```").unwrap();
+    assert_eq!(install.lines().count(), 3, "{install}");
+    assert_eq!(install.lines().last(), Some("gdcli auth setup"));
+    assert_eq!(
+        blocks[2],
+        "Skills are available via `gdcli skills`, or can be added to your system with:"
+    );
+    assert_eq!(blocks[3], "```sh\nnpx skills add pycabbage/gdcli\n```");
 }
 
 #[test]

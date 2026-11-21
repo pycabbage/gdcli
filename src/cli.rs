@@ -3,6 +3,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+const BROWSER_ENV: &str = "Environment: GDCLI_OPEN_BROWSER=1 opens the browser even in an AI agent shell (only with the user's consent).";
+
 pub fn moment(value: &str) -> Result<OffsetDateTime, String> {
     let full = if value.len() == 10 {
         format!("{value}T00:00:00Z")
@@ -155,14 +157,27 @@ pub struct ReadArgs {
     pub account: AccountArg,
 }
 
+#[derive(Debug, Clone, Copy, Args)]
+pub struct LoginArgs {
+    #[arg(
+        long,
+        help = "Do not open a browser, only print the login URL (the default in an AI agent shell; GDCLI_OPEN_BROWSER=1 opens it there)"
+    )]
+    pub no_browser: bool,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum AuthCommand {
-    #[command(about = "Show setup instructions, install the OAuth client secret, then log in")]
-    Setup,
     #[command(
-        about = "Log in a Google account (the first one becomes the default; a known one is refreshed)"
+        about = "Show setup instructions, install the OAuth client secret, then log in",
+        after_help = BROWSER_ENV
     )]
-    Login,
+    Setup(LoginArgs),
+    #[command(
+        about = "Log in a Google account (the first one becomes the default; a known one is refreshed)",
+        after_help = BROWSER_ENV
+    )]
+    Login(LoginArgs),
     #[command(about = "List the logged-in accounts and mark the default")]
     List,
     #[command(about = "Make an account the default")]

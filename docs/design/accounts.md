@@ -1,6 +1,6 @@
 # Accounts
 
-gdcli keeps one OAuth token per Google account. Code: `src/auth/accounts.rs` (storage, selection, migration), `src/auth/token.rs` (authenticator and login flow), `src/auth/mod.rs` (`auth list`, `auth set-default`). Authentication facts that do not depend on accounts (scopes, flows, HTTP stack, refresh tokens) are in `auth.md`.
+gdcli keeps one OAuth token per Google account. Code: `src/auth/accounts.rs` (storage, selection, migration), `src/auth/token.rs` (authenticator and login flow), `src/auth/browser.rs` (the login flow delegate: URL line, hint, browser opening), `src/auth/mod.rs` (`auth list`, `auth set-default`). Authentication facts that do not depend on accounts (scopes, flows, HTTP stack, refresh tokens) are in `auth.md`.
 
 ## Layout
 
@@ -39,11 +39,11 @@ The account file must exist (`token_file`). Errors (stderr, exit 1, nothing on s
 
 ## Commands
 
-- `gdcli auth login`: creates `accounts/` (0700), reads the client secret, runs the migration best effort under the 120 s deadline (`let _ = with_deadline(...)`, so a revoked legacy token or a hanging call never blocks the login that replaces it), creates `accounts/.login-XXXXXX` containing `[]`, runs the browser flow against that file (no deadline: it waits for the human), asks Drive which account signed in (120 s deadline), then renames the finished file to `accounts/<email>.json` and prints `account:`, `status:` (`added`, or `refreshed` when the file existed) and `default:`. The first account (no account existed before the rename) becomes the default and overwrites any stale pointer; later accounts leave the default alone; a refresh keeps it. No stored token is deleted: a failed, timed-out or aborted login drops the temporary file and every account stays as it was.
+- `gdcli auth login`: creates `accounts/` (0700), reads the client secret, runs the migration best effort under the 120 s deadline (`let _ = with_deadline(...)`, so a revoked legacy token or a hanging call never blocks the login that replaces it), creates `accounts/.login-XXXXXX` containing `[]`, runs the browser flow against that file (the `Terminal` flow delegate prints the URL once and opens the browser unless `--no-browser` or an agent shell, `auth.md`; no deadline: it waits for the human), asks Drive which account signed in (120 s deadline), then renames the finished file to `accounts/<email>.json` and prints `account:`, `status:` (`added`, or `refreshed` when the file existed) and `default:`. The first account (no account existed before the rename) becomes the default and overwrites any stale pointer; later accounts leave the default alone; a refresh keeps it. No stored token is deleted: a failed, timed-out or aborted login drops the temporary file and every account stays as it was.
 - `gdcli auth list`: header `account<TAB>default`, one row per account sorted by email, `default` is `true` or `false`. The pointer is read leniently, so a stale pointer, or several accounts without a pointer, only means that no row is marked; `auth list` never fails on an ambiguous default. No `--json`. Runs the migration first.
 - `gdcli auth set-default <email>`: the account must exist (else `unknown account`); the pointer is replaced atomically (temporary file in the data directory, `persist`, mode 0600); prints `account:` and `default: true`. Runs the migration first. The top-level `gdcli set-default` is deliberately not built (no aliases).
 - There is no `auth remove` or logout (not requested): delete `accounts/<email>.json` by hand; if it was the default, the pointer is stale and the single-account rule or the `set-default` hint repairs it.
-- `gdcli auth setup` is the 0.3.0 wizard (`auth.md`) followed by `auth login`.
+- `gdcli auth setup` is the 0.3.0 wizard (`auth.md`) followed by `auth login`; both take `--no-browser` and pass the same flow delegate to the login.
 
 ## Migration of the 0.3.0 token
 

@@ -5,3 +5,9 @@ curl -fsSL -o /tmp/gdcli.tar.gz https://github.com/pycabbage/gdcli/releases/late
 mkdir -p ~/.local/bin && tar -xzf /tmp/gdcli.tar.gz -C ~/.local/bin gdcli
 gdcli auth setup
 ```
+
+Skills are available via `gdcli skills`, or can be added to your system with:
+
+```sh
+npx skills add pycabbage/gdcli
+```

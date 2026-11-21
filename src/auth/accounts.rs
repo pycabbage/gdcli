@@ -214,6 +214,6 @@ pub async fn migrate(paths: &Paths) -> Result<()> {
     }
     let secret = secret(paths).await?;
     let client = https_builder().build(connector());
-    let auth = authenticator(secret, &legacy, None, false, client.clone()).await?;
+    let auth = authenticator(secret, &legacy, None, None, client.clone()).await?;
     adopt(paths, &Google::production(client, auth)).await
 }

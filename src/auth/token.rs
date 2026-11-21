@@ -50,10 +50,10 @@ pub async fn authenticator(
     secret: ApplicationSecret,
     token_file: &Path,
     account: Option<&Email>,
-    login: bool,
+    flow: Option<Box<dyn InstalledFlowDelegate>>,
     client: Client<Https, String>,
 ) -> Result<Authenticator<Https>> {
-    let method = if login {
+    let method = if flow.is_some() {
         InstalledFlowReturnMethod::HTTPRedirect
     } else {
         InstalledFlowReturnMethod::Interactive
@@ -64,10 +64,9 @@ pub async fn authenticator(
         CustomHyperClientBuilder::from(client),
     )
     .persist_tokens_to_disk(token_file);
-    let builder = if login {
-        builder.force_account_selection(true)
-    } else {
-        builder.flow_delegate(Box::new(NotLoggedIn(account.cloned())))
+    let builder = match flow {
+        Some(flow) => builder.force_account_selection(true).flow_delegate(flow),
+        None => builder.flow_delegate(Box::new(NotLoggedIn(account.cloned()))),
     };
     builder.build().await.with_context(|| {
         format!(
@@ -77,7 +76,11 @@ pub async fn authenticator(
     })
 }
 
-pub async fn login(paths: &Paths, out: &mut impl Write) -> Result<()> {
+pub async fn login(
+    paths: &Paths,
+    out: &mut impl Write,
+    flow: impl InstalledFlowDelegate + 'static,
+) -> Result<()> {
     let secret = secret(paths).await?;
     accounts::create(paths)?;
     let _ = with_deadline(Some(DEADLINE), accounts::migrate(paths)).await;
@@ -87,7 +90,14 @@ pub async fn login(paths: &Paths, out: &mut impl Write) -> Result<()> {
         .write_all(b"[]")
         .context("cannot write the login file")?;
     let client = https_builder().build(connector());
-    let auth = authenticator(secret, pending.path(), None, true, client.clone()).await?;
+    let auth = authenticator(
+        secret,
+        pending.path(),
+        None,
+        Some(Box::new(flow)),
+        client.clone(),
+    )
+    .await?;
     auth.token(&SCOPES).await.context("login failed")?;
     let google = Google::production(client, auth);
     let stored = with_deadline(Some(DEADLINE), accounts::store(paths, pending, &google)).await?;

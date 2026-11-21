@@ -4,15 +4,17 @@ Accounts are Google accounts identified by email; each has its own token, and th
 
 ## gdcli auth setup
 
-`gdcli auth setup`
+`gdcli auth setup [--no-browser]`
 
-For a human. Prints the Google Cloud instructions and the destination of `client_secret.json`, asks for the path of the downloaded OAuth client JSON (empty if it is already in place; quotes and a leading `~/` are accepted), installs it, then logs in like `auth login`.
+For a human. Prints the Google Cloud instructions and the destination of `client_secret.json`, asks for the path of the downloaded OAuth client JSON (empty if it is already in place; quotes and a leading `~/` are accepted), installs it, then logs in like `auth login`, with the same browser rules and the same `--no-browser`.
 
 ## gdcli auth login
 
-`gdcli auth login`
+`gdcli auth login [--no-browser]`
 
-For a human. Prints an authorization URL: open it in a browser on the same machine, choose the Google account and approve; the command then finishes by itself. A new account is added; a known one is refreshed. The default changes only for the first account. No stored token is touched before the login succeeds.
+For a human. Prints the authorization URL once and opens it in the default browser of the machine (`--no-browser` only prints it, and the browser must run on the machine where gdcli runs): choose the Google account and approve; the command then finishes by itself. A new account is added; a known one is refreshed. The default changes only for the first account. No stored token is touched before the login succeeds.
+
+In an AI agent shell (one of `AI_AGENT`, `OPENCODE`, `CLAUDE_CODE_CHILD_SESSION`, `CODEX_THREAD_ID`, `CODEX_CI`, `GEMINI_CLI`, `CURSOR_AGENT`, `GOOSE_TERMINAL`, `CLINE_ACTIVE`, `OPENCLAW_SHELL` or `AUGMENT_AGENT` is set and not empty) nothing is opened and the output starts with one hint line before the URL. `GDCLI_OPEN_BROWSER=1` (only the value `1`) opens the browser there anyway. Set `GDCLI_OPEN_BROWSER=1` only after the user has agreed to a browser opening on their machine, never on your own; otherwise pass `--no-browser` and hand the printed URL to the user.
 
 ```
 account: bob@example.org

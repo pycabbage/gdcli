@@ -24,7 +24,7 @@ Error text: every message is built from our own lowercase context (`cannot ...`,
 
 ## `gdcli auth setup|login|list|set-default`
 
-Usage: `skills/gdcli/references/auth.md`. Design: `accounts.md` (layout, selection, migration, the Drive dependency, the messages) and `auth.md` (the OAuth client, scopes, flows). `auth list` is a list command (header `account<TAB>default`, rows sorted by email, no `--json`, no past or upcoming grouping); `auth login` and `auth set-default` print `output::record` lines; there is no top-level `gdcli set-default`.
+Usage: `skills/gdcli/references/auth.md`. Design: `accounts.md` (layout, selection, migration, the Drive dependency, the messages) and `auth.md` (the OAuth client, scopes, flows). `auth list` is a list command (header `account<TAB>default`, rows sorted by email, no `--json`, no past or upcoming grouping); `auth login` and `auth set-default` print `output::record` lines; there is no top-level `gdcli set-default`. `auth setup` and `auth login` take exactly one option, `--no-browser` (`cli::LoginArgs`, the same struct for both; help: `Do not open a browser, only print the login URL (the default in an AI agent shell; GDCLI_OPEN_BROWSER=1 opens it there)`), and both show the environment variable `GDCLI_OPEN_BROWSER` in `after_help`; they are the only commands that start a browser. Without the flag the login URL is printed once and opened through the `open` crate; in an AI agent shell nothing is opened and one hint line precedes the URL unless `GDCLI_OPEN_BROWSER=1`. The decision table, the variable list with sources, the hint and the opener behaviour: `auth.md` ("Opening the browser"). The option does not exist on any other command (a test pins it).
 
 ## `gdcli update`
 

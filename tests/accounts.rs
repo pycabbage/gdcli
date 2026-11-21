@@ -503,7 +503,7 @@ async fn an_expired_legacy_token_has_its_own_message() {
     let file = dir.path().join("token.json");
     std::fs::write(&file, EXPIRED_TOKEN).unwrap();
     let client = https_builder().build(connector());
-    let auth = authenticator(secret(), &file, None, false, client.clone())
+    let auth = authenticator(secret(), &file, None, None, client.clone())
         .await
         .unwrap();
     let message = auth.token(&SCOPES).await.unwrap_err().to_string();
@@ -513,7 +513,7 @@ async fn an_expired_legacy_token_has_its_own_message() {
     );
     assert!(!message.contains("no valid token for"), "{message}");
     let account = mail("alice@example.com");
-    let auth = authenticator(secret(), &file, Some(&account), false, client)
+    let auth = authenticator(secret(), &file, Some(&account), None, client)
         .await
         .unwrap();
     let message = auth.token(&SCOPES).await.unwrap_err().to_string();

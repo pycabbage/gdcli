@@ -1,6 +1,6 @@
 # Dependencies
 
-Audit date: 2026-11-18; the dependencies added for `gdcli update` (below) were audited on 2026-11-19 with the same thresholds. Every direct dependency was checked on four axes against crates.io, GitHub and RustSec; the thresholds and the result are recorded here so the audit can be repeated.
+Audit date: 2026-11-18; the dependencies added for `gdcli update` (below) were audited on 2026-11-19 with the same thresholds; `open` and its two transitive crates (0.4.1) on 2026-11-21. Every direct dependency was checked on four axes against crates.io, GitHub and RustSec; the thresholds and the result are recorded here so the audit can be repeated.
 
 ## Thresholds
 
@@ -32,6 +32,7 @@ Audit date: 2026-11-18; the dependencies added for `gdcli update` (below) were a
 | semver | 1.0.28 | 295.3M | 675 | dtolnay (user) | 2 | 2026-04-04 | PASS (one author writes 90 % of the commits) |
 | tar (no default features) | 0.4.46 | 81.8M | 748 | composefs (org; moved from alexcrichton/tar-rs) | 8 | 2026-05-18 | PASS (`>= 0.4.45` is required, see below) |
 | tempfile (a normal dependency since `update`, before a dev dependency) | 3.27.0 | 262.0M | 1,474 | Stebalien (user) | 6 | 2026-03-11 | PASS (one author writes 88 % of the commits) |
+| open (new in 0.4.1; 1,393 reverse dependencies) | 5.4.5 | 26.2M | 404 | Byron (user, gitoxide) | 8 people in 12 months (Byron = Sebastian Thiel wrote 32 of 42 commits) plus 3 commits of the `codex` AI account | 2026-10-22 | WARN (accepted, below: 404 stars, user-owned, one dominant author; downloads, releases and other contributors PASS) |
 | wiremock (dev) | 0.6.5 | 36.6M | 805 | LukeMathWalker (user) | 0 | 2025-08-24 | FAIL (accepted, dev only, below) |
 
 The contributor counts of the rows from flate2 to tempfile (added for `gdcli update`) are distinct non-bot commit author names since 2025-11-19 (`gh api "repos/<owner>/<repo>/commits?since=2025-11-19T00:00:00Z&per_page=100" --paginate`, authors whose GitHub type is `Bot` excluded); the earlier rows keep the method of the first audit.
@@ -52,6 +53,15 @@ The normal tree grows from 109 to 121 packages (+12): the five new direct crates
 | filetime | 0.2.30 | tar | 118.4M | 132 | alexcrichton (user) | 4 | 2026-11-16 | WARN (accepted, below) |
 | linux-raw-sys | 0.12.1 | rustix | 356.0M | 72 | sunfishcode (user) | 5 | 2025-12-23 | FAIL by star count (accepted, below) |
 
+## Packages added by `open` (0.4.1)
+
+The normal tree grows from 121 to 124 packages (+3) and `Cargo.lock` from 160 to 163: `open` and its two transitive crates below (`libc` and `once_cell` were already locked). Measured on 2026-11-21 (crates.io API, `gh api`, sources read from the `.crate` files).
+
+| Package | Version | Pulled by | Downloads 90 d | Stars | Owner | Last release | Verdict |
+|---|---|---|---|---|---|---|---|
+| is-wsl | 0.4.0 | open | 20.3M | 14 | TheLarkInn (user) | 2023-01-27 | FAIL (accepted, below): stale, tiny (3,264 byte crate) and avoidable |
+| is-docker | 0.2.0 | is-wsl | 20.3M | 8 | TheLarkInn (user) | 2023-01-22 | FAIL (accepted, below): stale, tiny (2,664 byte crate) and avoidable |
+
 ## Decisions
 
 | Crate | Decision | Reason |
@@ -64,6 +74,12 @@ The normal tree grows from 109 to 121 packages (+12): the five new direct crates
 | directories, dirs, etcetera | rejected | `directories` is archived; `dirs` adds two packages and changes the HOME fallback behaviour; `etcetera` is WARN and not better than six lines of std. |
 | google-cloud-auth, oauth2, gcp_auth | rejected for login | none provides the installed-app loopback flow with token persistence (`google-cloud-auth` has no interactive flow, `oauth2` is primitives only and stale, `gcp_auth` is service-account/ADC only). |
 | self_update, ubi, axoupdater, binstalk, sigstore-verify | rejected for `gdcli update` | `self_update`: +2,451,448 bytes (+67 %), +39 packages, a second HTTP client (`ureq`), mandatory `regex`, ignores draft, prerelease and immutable releases; `ubi`: +3.45 MB, +86 packages, a `chrono` unmaintained advisory (RUSTSEC-2026-0543) in its tree, in-place copy fails with ETXTBSY; `axoupdater`: needs `dist` install receipts and an installer asset; `binstalk`: +94 packages; `sigstore-verify`: +34 packages including `aws-lc-sys` (C). The update is our hyper/rustls stack plus the crates above (details in `update.md`). |
+| `open` 5.4.5 | chosen for opening the login URL (`open::that_detached`) | the only candidate with a real fallback chain that reports failure and never uses the caller's terminal; one call. Linux order: on WSL PowerShell first, then `xdg-open`, `gio open`, `gnome-open`, `kde-open6`, `kde-open5`, `kde-open`; the next launcher is tried when one exits non-zero; `io::Error` when none works; ignores `$BROWSER`; stdio null, `setsid`, at most 250 ms of waiting per launcher, a reaper thread. Measured cost (local `cargo build --release --locked`, then `cargo zigbuild`): see `performance.md`. Stub-launcher experiments: `auth.md` |
+| `webbrowser` 1.2.7 | rejected | text browsers from `$BROWSER` run in the FOREGROUND with inherited stdio (a stub named by `BROWSER=lynx` printed into gdcli's stdout; a real `lynx` would take over the agent's terminal and block the login); never runs `xdg-open` outside Flatpak (a `PATH` with only `xdg-open` gave 0 calls); 4,001,352 bytes (x86_64 zigbuild, +65,264 against the hand-written call of 3,936,088); 188 lock entries (28 foreign-OS crates) |
+| `opener` 0.9.0 | rejected | 4,026,256 bytes (x86_64 zigbuild, +90,168), a 32 KB embedded script, 75 stars (below 100), `passively-maintained` badge, `Ok` even when `xdg-open` exits 1 (failure unobservable), `BROWSER=a:b` gave 0 calls |
+| a hand-written `Command::new("xdg-open")` (5 lines) | not chosen, the exit plan of `open` | smallest (3,936,088 bytes x86_64 zigbuild, no new package, 160 lock entries) but no `gio`, KDE or WSL fallback |
+| `tauri-plugin-opener`, `robius-open`, `url_open` | rejected | Tauri dependency; 22k downloads in 90 days and one owner; last release 2023 |
+| `mise-agent-env`, `is-ai-agent`, `detect-coding-agent`, `agent-detector`, `ai_env`, `franken-agent-detection` | rejected for the agent-shell detection | all fail the fame threshold (500k downloads in 90 days or 100 reverse dependencies); `mise-agent-env` has 9.7k downloads, 4 reverse dependencies and heuristics on `PAGER` and `PS1`. A hand-written list of 11 names is used (`auth.md`, section "Opening the browser") |
 | sha2 | rejected, `ring::digest` | `ring` is already in the tree; `sha2` would add `digest`, `block-buffer`, `crypto-common`, `generic-array`, `cpufeatures` and a second SHA-256 |
 | a manual version compare, a hand-written replace | rejected, `semver` and `self-replace` | the owner prefers libraries to scratch code; `self-replace` is 48 lines on Unix and needs `tempfile`, which gdcli uses anyway |
 | `miniz_oxide` backend of flate2 | rejected, `zlib-rs` | 3 packages fewer, faster inflate, 12.5 KB more binary |
@@ -77,14 +93,15 @@ The normal tree grows from 109 to 121 packages (+12): the five new direct crates
 - `linux-raw-sys` (new, FAIL by star count: 72 stars, user-owned): accepted. It is an unavoidable transitive of `rustix`, which `tempfile` needs, which `self-replace` needs; it has the same author as `rustix` (sunfishcode, bytecodealliance), 356M downloads in 90 days, a release 11 months ago and no advisory, and it was already in `Cargo.lock` through the dev dependencies. Owner acknowledgement requested. Trigger to leave: a RustSec advisory or no release for 24 months (December 2027). Plan: drop `self-replace` and `tempfile` for about 20 lines of `std` (create the staging file with `OpenOptions::create_new` next to the executable, copy, set permissions, rename).
 - `filetime` (new, WARN: 132 stars, user-owned, one dominant author): accepted, it is required by `tar` and tiny (118M downloads). It follows the `tar` exit plan.
 - `self-replace` (3 of 4 commits by one author) and `tar` (the repository moved to the composefs organisation): exit plans are the `std` replacement above and, for `tar`, `astral-tokio-tar` or a header parser on top of `flate2`; trigger for both: a RustSec advisory or no release for 24 months. `tar` must stay at `>= 0.4.45`: RUSTSEC-2026-0067 concerns `unpack_in`, which is never called, and RUSTSEC-2026-0068 concerns PAX size-header parsing, which `Archive::entries()` uses.
+- `open` (WARN, with `is-wsl` and `is-docker` as FAIL (accepted)): `open` has 404 stars (below 500), a user-owned repository and one dominant author; `is-wsl` and `is-docker` are stale (last release January 2023), tiny and avoidable (they only read `/proc` and `/.dockerenv`), with no advisory. Upstream `open` main already removed `is-wsl` (commit "Remove dependency to is_wsl" by Th3Link dated 2026-10-26, merged 2026-10-30, unreleased in 5.4.5). `open` uses `unsafe` internally (`pre_exec`, `setsid`); our crate keeps `forbid(unsafe_code)`. Exit plan: re-check every release for an `open` release without `is-wsl` (then 122 packages), otherwise replace it by the 5-line `xdg-open` call (no `gio`, KDE or WSL fallback). Trigger to leave: a RustSec advisory, or no release for 24 months (October 2028).
 - Duplicate package version: `getrandom` 0.2.17 (ring) and 0.4.3 (tempfile) are both shipped (the first duplicate in the shipped tree); it goes away when ring and tempfile use the same `getrandom`.
 
 ## Transitive findings
 
-- `cargo audit` (RustSec database of 1533 advisories fetched on 2026-11-19, 160 crates in `Cargo.lock`): 0 vulnerabilities, 0 warnings; it also passes with `-D warnings`, so it can be added to CI without an ignore list.
+- `cargo audit` (RustSec database of 1555 advisories fetched on 2026-11-21, 163 crates in `Cargo.lock`; 1533 advisories and 160 crates on 2026-11-19, before `open`): 0 vulnerabilities, 0 warnings; it also passes with `-D warnings`, so it can be added to CI without an ignore list.
 - `cargo tree -d -e normal`: one duplicate in the shipped tree, `getrandom` 0.2.17 and 0.4.3 (accepted above).
 - `cargo machete`: no unused dependency.
-- 121 unique packages in the normal tree, including gdcli (109 before `gdcli update`, 108 before `foldhash`). Notes from the audit that remain true: `cfg-if` (via ring) is archived upstream without an advisory; `lazy_static` (dev only, via wiremock) is archived; about 14 tiny feature-complete crates have had no release for more than 18 months (`fnv`, `httpdate`, `seahash`, `untrusted`, `httparse`, `subtle`, `tower-service`, `ring` 0.17.14 whose upstream is active, ...), none has an advisory; `base64` 0.22 is locked while 0.23 exists, chosen by yup-oauth2.
+- 124 unique packages in the normal tree, including gdcli (121 before `open`, 109 before `gdcli update`, 108 before `foldhash`). Notes from the audit that remain true: `cfg-if` (via ring) is archived upstream without an advisory; `lazy_static` (dev only, via wiremock) is archived; about 14 tiny feature-complete crates have had no release for more than 18 months (`fnv`, `httpdate`, `seahash`, `untrusted`, `httparse`, `subtle`, `tower-service`, `ring` 0.17.14 whose upstream is active, ...), none has an advisory; `base64` 0.22 is locked while 0.23 exists, chosen by yup-oauth2.
 
 ## How to re-audit
 

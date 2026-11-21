@@ -65,7 +65,7 @@
 - Limitation: if the attest step fails after a successful publish, the release exists (and may be immutable) without a provenance attestation, and re-running the workflow stops at the preflight check for an immutable release. Attestations can be created for the already published files by running the same attest step again in a separate job that downloads the release assets; the project has no such workflow.
 - Verify a download (needs `gh`; `--owner pycabbage` is the form the GoReleaser docs use): `gh attestation verify gdcli_linux_x86_64.tar.gz --repo pycabbage/gdcli`.
 - With immutable releases enabled, GitHub's own release attestation is checked with `gh release verify <tag>` and `gh release verify-asset <tag> <file>`.
-- Not added to the README (the README is restricted to the install lines).
+- Not added to the README (the README holds the install lines and the skills note only).
 
 ## Immutable releases
 
@@ -140,7 +140,7 @@ Who: agents manage tags and releases. The human owner pushes only exceptionally.
 Tag policy:
 
 - `vX.Y.Z`, annotated (`git tag -a`), always equal to `v` plus the `version` in `Cargo.toml`, so that `gdcli --version` (clap reads `CARGO_PKG_VERSION`) always matches the tag. The release workflow triggers on `v*`.
-- SemVer: patch for fixes, minor for features. While the version is 0.x, breaking changes also bump minor. The first release is `v0.1.0`; `v0.2.0` (the first with `gdcli update`, a new command, hence a minor bump) is the third one. All releases are listed in Release history.
+- SemVer. While the version is 0.x: patch for fixes and for a new option or environment variable on an existing command, with existing options, record keys and exit statuses unchanged; minor for new commands and breaking changes. `v0.2.0` (a new command) and `v0.3.0` (a small addition to `gdcli update`) were released under the earlier wording (patch for fixes, minor for features) and keep their numbers; the refined wording applies from `v0.4.1`. `v0.4.1` changes the default behavior of `auth login` and `auth setup` (the browser now opens in non-agent shells) and adds one hint line in agent shells; that is why its history row, written after the release, says so. The first release is `v0.1.0`; `v0.2.0` (the first with `gdcli update`) is the third one. All releases are listed in Release history.
 - Never force-push a branch. Never move, rewrite or delete a tag whose release was published. A tag whose run failed before the publish call (no release, or a draft) was never usable and may be deleted and re-created; this is the only permitted tag deletion.
 
 Procedure (nothing is published by hand: GoReleaser publishes the draft at the end of the run):

@@ -28,7 +28,7 @@ pub fn is_broken_pipe(error: &anyhow::Error) -> bool {
 
 pub fn deadline_for(command: &Command) -> Option<Duration> {
     match command {
-        Command::Auth(AuthCommand::Setup | AuthCommand::Login) => None,
+        Command::Auth(AuthCommand::Setup(_) | AuthCommand::Login(_)) => None,
         _ => Some(google::DEADLINE),
     }
 }
@@ -42,6 +42,13 @@ pub fn now() -> OffsetDateTime {
     now.replace_nanosecond(0).unwrap_or(now)
 }
 
+fn terminal(
+    args: cli::LoginArgs,
+) -> impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate {
+    let launch = auth::browser::launch(args.no_browser, &|name| std::env::var_os(name));
+    auth::browser::Terminal::new(launch, std::io::stdout(), auth::browser::open_url)
+}
+
 async fn execute(
     command: Command,
     resolve: &dyn Fn() -> Result<Paths>,
@@ -52,10 +59,12 @@ async fn execute(
     match command {
         Command::Update => update::run(out).await,
         Command::Skills { topic } => Ok(skills::print(topic, out)?),
-        Command::Auth(AuthCommand::Setup) => {
-            auth::setup::setup(&resolve()?, std::io::stdin().lock(), out).await
+        Command::Auth(AuthCommand::Setup(args)) => {
+            auth::setup::setup(&resolve()?, std::io::stdin().lock(), out, terminal(args)).await
         }
-        Command::Auth(AuthCommand::Login) => auth::login(&resolve()?, out).await,
+        Command::Auth(AuthCommand::Login(args)) => {
+            auth::login(&resolve()?, out, terminal(args)).await
+        }
         Command::Auth(AuthCommand::List) => auth::list(&resolve()?, out).await,
         Command::Auth(AuthCommand::SetDefault { email }) => {
             auth::set_default(&resolve()?, &email, out).await
